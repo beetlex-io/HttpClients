@@ -11,61 +11,30 @@ namespace BeetleX.Http.WebSockets
 
         public TextClient(Uri host) : base(host) { }
 
-        protected override void OnDataReceive(WSReceiveArgs e)
-        {
-            var message = e.Frame;
-            if (message.Type == DataPacketType.text)
-            {
-                if (message.Length > 0)
-                {
-                    e.Message = Encoding.UTF8.GetString(message.Body, 0, message.Body.Length);
-                }
-                else
-                {
-                    e.Message = null;
-                }
-            }
-            else
-            {
-                e.Error = new BXException($"ws receive data type is {message.Type}");
-            }
-            if (mReceiveCompletionSource != null)
-            {
-                var rec = mReceiveCompletionSource;
-                mReceiveCompletionSource = null;
-                Task.Run(() =>
-                {
-                    if (e.Error != null)
-                    {
-                        rec.TrySetException(e.Error);
-                    }
-                    else
-                    {
-                        rec.TrySetResult((string)e.Message);
-                    }
-                });
-            }
-            else
-            {
-                base.OnDataReceive(e);
-            }
-        }
-
-        public async Task Write(string text)
+        public virtual void Send(string text)
         {
             DataFrame dataFrame = new DataFrame();
-            dataFrame.Body = Encoding.UTF8.GetBytes(text);
-            await Send(dataFrame);
+            byte[] data = Encoding.UTF8.GetBytes(text);
+            dataFrame.Body = new ArraySegment<byte>(data, 0, data.Length);
+            SendFrame(dataFrame);
         }
 
-        private TaskCompletionSource<string> mReceiveCompletionSource;
-
-        public async Task<string> SyncWrite(string text)
+        public virtual async Task<string> Receive()
         {
-            await Write(text);
-            mReceiveCompletionSource = new TaskCompletionSource<string>();
-            var result = await mReceiveCompletionSource.Task;
+            var data = await ReceiveFrame();
+            if (data.Type != DataPacketType.text)
+                throw new BXException("Data type is not text");
+            if (data.Body == null)
+                return null;
+            var body = data.Body.Value;
+            string result = Encoding.UTF8.GetString(body.Array, body.Offset, body.Count);
             return result;
+        }
+
+        public async Task<string> ReceiveFrom(string text)
+        {
+            Send(text);
+            return await Receive();
         }
     }
 }

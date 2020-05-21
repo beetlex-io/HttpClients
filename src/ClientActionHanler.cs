@@ -30,7 +30,7 @@ namespace BeetleX.Http.Clients
 
         public ControllerAttribute Controller { get; set; }
 
-        public IClientBodyFormater Formater { get; set; }
+        public IBodyFormater Formater { get; set; }
 
         public MethodInfo MethodInfo { get; set; }
 
@@ -40,6 +40,8 @@ namespace BeetleX.Http.Clients
         { get; set; }
 
         public bool Async { get; set; }
+
+        public HttpHost Host { get; set; }
 
         public Type ReturnType { get; set; }
 
@@ -51,7 +53,15 @@ namespace BeetleX.Http.Clients
             Method = "GET";
             Name = method.Name;
             DeclaringType = method.DeclaringType;
+            var host = DeclaringType.GetCustomAttribute<HostAttribute>(false);
             MethodType = MethodInfo.ReturnType;
+            var mhost = method.GetCustomAttribute<HostAttribute>(false);
+            if (mhost != null)
+                host = mhost;
+            if(host !=null)
+            {
+                this.Host = new HttpHost(host.Host);
+            }
             Async = false;
             if (MethodInfo.ReturnType != typeof(void))
             {
@@ -287,7 +297,7 @@ namespace BeetleX.Http.Clients
 
             public string Url;
 
-            public IClientBodyFormater Formatter;
+            public IBodyFormater Formatter;
 
             public Dictionary<string, object> Data;
 

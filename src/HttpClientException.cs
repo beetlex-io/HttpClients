@@ -6,6 +6,11 @@ namespace BeetleX.Http.Clients
 {
     public class HttpClientException : Exception
     {
+        public HttpClientException(string message, Exception innerError = null) : base($"{message}", innerError)
+        {
+
+        }
+
         public HttpClientException(Request request, Uri host, string message, Exception innerError = null) : base($"request {host} error {message}", innerError)
         {
             Request = request;

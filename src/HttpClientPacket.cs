@@ -112,35 +112,49 @@ namespace BeetleX.Http.Clients
 
         public void Decode(IClient client, Stream stream)
         {
-            var pipeStream = stream.ToPipeStream();
-            if (response == null)
+            try
             {
-                response = new Response();
-            }
-            if (response.Load(pipeStream) == LoadedState.Completed)
-            {
-                if (response.Chunked)
+                var pipeStream = stream.ToPipeStream();
+                if (response == null)
                 {
-                    loadChunkedData(pipeStream);
+                    response = new Response();
                 }
-                else
+                if (response.Load(pipeStream) == LoadedState.Completed)
                 {
-                    if (response.Length == 0)
+                    if (response.Chunked)
                     {
-                        var item = response;
-                        response = null;
-                        Completed?.Invoke(Client, item);
+                        loadChunkedData(pipeStream);
                     }
                     else
                     {
-                        if (pipeStream.Length >= response.Length)
+                        if (response.Length == 0)
                         {
                             var item = response;
-                            item.Stream = pipeStream;
                             response = null;
                             Completed?.Invoke(Client, item);
                         }
+                        else
+                        {
+                            if (pipeStream.Length >= response.Length)
+                            {
+                                var item = response;
+                                item.Stream = pipeStream;
+                                response = null;
+                                Completed?.Invoke(Client, item);
+                            }
+                        }
                     }
+                }
+            }
+            catch(Exception e_)
+            {
+                if (mIsDisposed)
+                {
+                    throw new HttpClientException("Protocol data processing error, connection closed", e_);
+                }
+                else
+                {
+                    throw new HttpClientException("Protocol data processing error", e_);
                 }
             }
         }

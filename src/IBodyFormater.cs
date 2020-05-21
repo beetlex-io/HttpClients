@@ -9,21 +9,21 @@ using Newtonsoft.Json.Linq;
 
 namespace BeetleX.Http.Clients
 {
-    public interface IClientBodyFormater
+    public interface IBodyFormater
     {
         string ContentType { get; }
 
-        void Serialization( object data, PipeStream stream);
+        void Serialization(object data, PipeStream stream);
 
         object Deserialization(Response response, BeetleX.Buffers.PipeStream stream, Type type, int length);
     }
 
     [AttributeUsage(AttributeTargets.Method | AttributeTargets.Interface | AttributeTargets.Class)]
-    public abstract class FormaterAttribute : Attribute, IClientBodyFormater
+    public abstract class FormaterAttribute : Attribute, IBodyFormater
     {
         public abstract string ContentType { get; }
 
-        public abstract void Serialization( object data, PipeStream stream);
+        public abstract void Serialization(object data, PipeStream stream);
 
         public abstract object Deserialization(Response response, BeetleX.Buffers.PipeStream stream, Type type, int length);
     }
@@ -36,35 +36,38 @@ namespace BeetleX.Http.Clients
         {
             return stream.ReadString(length);
         }
-        public override void Serialization( object data, PipeStream stream)
+        public override void Serialization(object data, PipeStream stream)
         {
-            System.Collections.IDictionary keyValuePairs = data as IDictionary;
-            if (keyValuePairs != null)
+            if (data != null)
             {
-                int i = 0;
-                foreach (object key in keyValuePairs.Keys)
+                System.Collections.IDictionary keyValuePairs = data as IDictionary;
+                if (keyValuePairs != null)
                 {
-                    object value = keyValuePairs[key];
-                    if (value != null)
+                    int i = 0;
+                    foreach (object key in keyValuePairs.Keys)
                     {
-                        if (i > 0)
-                            stream.Write("&");
-                        stream.Write(key.ToString() + "=");
-                        if (value is string)
+                        object value = keyValuePairs[key];
+                        if (value != null)
                         {
-                            stream.Write(System.Net.WebUtility.UrlEncode((string)value));
+                            if (i > 0)
+                                stream.Write("&");
+                            stream.Write(key.ToString() + "=");
+                            if (value is string)
+                            {
+                                stream.Write(System.Net.WebUtility.UrlEncode((string)value));
+                            }
+                            else
+                            {
+                                stream.Write(System.Net.WebUtility.UrlEncode(value.ToString()));
+                            }
+                            i++;
                         }
-                        else
-                        {
-                            stream.Write(System.Net.WebUtility.UrlEncode(value.ToString()));
-                        }
-                        i++;
                     }
                 }
-            }
-            else
-            {
-                stream.Write(data.ToString());
+                else
+                {
+                    stream.Write(data.ToString());
+                }
             }
         }
     }
@@ -103,19 +106,22 @@ namespace BeetleX.Http.Clients
         {
             using (stream.LockFree())
             {
-                using (StreamWriter writer = new StreamWriter(stream))
+                if (data != null)
                 {
-                    IDictionary dictionary = data as IDictionary;
-                    JsonSerializer serializer = new JsonSerializer();
-                    if (dictionary != null && dictionary.Count == 1)
+                    using (StreamWriter writer = new StreamWriter(stream))
                     {
-                        object[] vlaues = new object[dictionary.Count];
-                        dictionary.Values.CopyTo(vlaues, 0);
-                        serializer.Serialize(writer, vlaues[0]);
-                    }
-                    else
-                    {
-                        serializer.Serialize(writer, data);
+                        IDictionary dictionary = data as IDictionary;
+                        JsonSerializer serializer = new JsonSerializer();
+                        if (dictionary != null && dictionary.Count == 1)
+                        {
+                            object[] vlaues = new object[dictionary.Count];
+                            dictionary.Values.CopyTo(vlaues, 0);
+                            serializer.Serialize(writer, vlaues[0]);
+                        }
+                        else
+                        {
+                            serializer.Serialize(writer, data);
+                        }
                     }
                 }
             }

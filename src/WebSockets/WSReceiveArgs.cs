@@ -10,8 +10,6 @@ namespace BeetleX.Http.WebSockets
 
         public DataFrame Frame { get; internal set; }
 
-        public object Message { get; internal set; }
-
         public Exception Error { get; internal set; }
     }
 }

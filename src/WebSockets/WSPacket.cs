@@ -39,20 +39,28 @@ namespace BeetleX.Http.WebSockets
                 }
                 else
                 {
-                    if (mReceiveFrame == null)
-                        mReceiveFrame = new DataFrame();
-                    if (mReceiveFrame.Read(stream.ToPipeStream()) == DataPacketLoadStep.Completed)
+                    var pipestream = stream.ToPipeStream();
+                    while (pipestream.Length > 0)
                     {
-                        Completed?.Invoke(client, mReceiveFrame);
-                        mReceiveFrame = null;
+                        if (mReceiveFrame == null)
+                            mReceiveFrame = new DataFrame();
+                        if (mReceiveFrame.Read(pipestream, WSClient) == DataPacketLoadStep.Completed)
+                        {
+                            Completed?.Invoke(client, mReceiveFrame);
+                            mReceiveFrame = null;
+                        }
+                        else
+                        {
+                            break;
+                        }
                     }
                 }
             }
-            catch(Exception e_)
+            catch (Exception e_)
             {
                 throw new BXException("ws protocol decode error", e_);
             }
-            
+
         }
 
         public void Dispose()
@@ -66,9 +74,13 @@ namespace BeetleX.Http.WebSockets
             {
                 ((DataFrame)data).Write(stream.ToPipeStream());
             }
-            catch(Exception e_)
+            catch (Exception e_)
             {
                 throw new BXException("ws protocol encode error", e_);
+            }
+            finally
+            {
+                WSClient.FrameWrited((DataFrame)data);
             }
         }
     }

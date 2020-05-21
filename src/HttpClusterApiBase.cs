@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 using System.Text.RegularExpressions;
+using BeetleX.Tasks;
 
 namespace BeetleX.Http.Clients
 {
@@ -376,7 +377,7 @@ namespace BeetleX.Http.Clients
         }
     }
 
-    public class HttpClusterApiProxy : System.Reflection.DispatchProxy,IHeaderHandler
+    public class HttpClusterApiProxy : System.Reflection.DispatchProxy, IHeaderHandler
     {
         public HttpClusterApiProxy()
         {
@@ -399,9 +400,9 @@ namespace BeetleX.Http.Clients
                 Exception error = new HttpClientException(null, null, $"request {rinfo.Url} no http nodes are available");
                 if (handler.Async)
                 {
-                    Type gtype = typeof(AnyCompletionSource<>);
-                    Type type = gtype.MakeGenericType(handler.ReturnType);
-                    IAnyCompletionSource source = (IAnyCompletionSource)Activator.CreateInstance(type);
+                    //Type gtype = typeof(AnyCompletionSource<>);
+                    //Type type = gtype.MakeGenericType(handler.ReturnType);
+                    IAnyCompletionSource source = CompletionSourceFactory.Create(handler.ReturnType, Cluster.TimeOut);  //(IAnyCompletionSource)Activator.CreateInstance(type);
                     source.Error(error);
                     return source.GetTask();
                 }
@@ -412,20 +413,7 @@ namespace BeetleX.Http.Clients
             }
             if (!handler.Async)
             {
-                var request = rinfo.GetRequest(host);
-                foreach(var item in Header)
-                {
-                    request.Header[item.Key] = item.Value;
-                }
-                var task = request.Execute();
-                if (!task.Wait(Cluster.TimeOut))
-                {
-                    throw new HttpClientException(request, host.Uri, $"{rinfo.Method} {rinfo.Url} request time out {Cluster.TimeOut}!");
-                }
-                Response.Current = task.Result;
-                if (task.Result.Exception != null)
-                    throw task.Result.Exception;
-                return task.Result.Body;
+                throw new Exception($"{rinfo.Method} method is not supported and the return value must be task!");
             }
             else
             {
@@ -435,10 +423,18 @@ namespace BeetleX.Http.Clients
                     request.Header[item.Key] = item.Value;
                 }
                 var task = request.Execute();
-                Type gtype = typeof(AnyCompletionSource<>);
-                Type type = gtype.MakeGenericType(handler.ReturnType);
-                IAnyCompletionSource source = (IAnyCompletionSource)Activator.CreateInstance(type);
-                source.WaitResponse(task);
+                IAnyCompletionSource source = CompletionSourceFactory.Create(handler.ReturnType, Cluster.TimeOut);
+                source.Wait<Response>(task, (c, t) =>
+                {
+                    if (t.Result.Exception != null)
+                    {
+                        c.Error(t.Result.Exception);
+                    }
+                    else
+                    {
+                        c.Success(t.Result.Body);
+                    }
+                });
                 return source.GetTask();
             }
 

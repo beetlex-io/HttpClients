@@ -1,4 +1,5 @@
-﻿using System;
+﻿using BeetleX.Tasks;
+using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Text;
@@ -7,9 +8,9 @@ using System.Threading.Tasks;
 namespace BeetleX.Http.Clients
 {
 
-    public class HttpApiProxy : System.Reflection.DispatchProxy
+    public class HttpInterfaceProxy : System.Reflection.DispatchProxy
     {
-        public HttpApiProxy()
+        public HttpInterfaceProxy()
         {
             TimeOut = 10000;
         }
@@ -22,65 +23,31 @@ namespace BeetleX.Http.Clients
         {
             ClientActionHanler handler = ClientActionFactory.GetHandler((MethodInfo)targetMethod);
             var rinfo = handler.GetRequestInfo(args);
-            var request = rinfo.GetRequest(Host);
+            var host = handler.Host != null ? handler.Host : Host;
+            if (host == null)
+                throw new Exception("The service host is not defined!");
+            var request = rinfo.GetRequest(host);
             var task = request.Execute();
             if (!handler.Async)
             {
-                task.Wait(TimeOut);
-                if (!task.Wait(TimeOut))
-                {
-                    throw new HttpClientException(request, Host.Uri, $"{rinfo.Method} {rinfo.Url} request time out!");
-                }
-                if (task.Result.Exception != null)
-                    throw task.Result.Exception;
-                return task.Result.Body;
+                throw new HttpClientException(request, Host.Uri, $"{rinfo.Method} method is not supported and the return value must be task!");
             }
             else
             {
-
-                Type gtype = typeof(AnyCompletionSource<>);
-                Type type = gtype.MakeGenericType(handler.ReturnType);
-                IAnyCompletionSource source = (IAnyCompletionSource)Activator.CreateInstance(type);
-                source.WaitResponse(task);
+                IAnyCompletionSource source = CompletionSourceFactory.Create(handler.ReturnType, TimeOut);
+                source.Wait<Response>(task, (c, t) =>
+                {
+                    if (t.Result.Exception != null)
+                    {
+                        c.Error(t.Result.Exception);
+                    }
+                    else
+                    {
+                        c.Success(t.Result.Body);
+                    }
+                });
                 return source.GetTask();
-
             }
-        }
-    }
-
-    interface IAnyCompletionSource
-    {
-        void Success(object data);
-        void Error(Exception error);
-        void WaitResponse(Task<Response> task);
-        Task GetTask();
-    }
-
-    class AnyCompletionSource<T> : TaskCompletionSource<T>, IAnyCompletionSource
-    {
-        public void Success(object data)
-        {
-            TrySetResult((T)data);
-        }
-
-        public void Error(Exception error)
-        {
-            TrySetException(error);
-        }
-
-        public async void WaitResponse(Task<Response> task)
-        {
-            var response = await task;
-            Response.Current = response;
-            if (response.Exception != null)
-                Error(response.Exception);
-            else
-                Success(response.Body);
-        }
-
-        public Task GetTask()
-        {
-            return this.Task;
         }
     }
 
@@ -90,6 +57,16 @@ namespace BeetleX.Http.Clients
         {
             Host = new HttpHost(host);
         }
+
+        public static T Create<T>(int timeout)
+        {
+            object result;
+            result = DispatchProxy.Create<T, HttpInterfaceProxy>();
+            ((HttpInterfaceProxy)result).TimeOut = timeout;
+            return (T)result;
+        }
+
+        public int TimeOut { get; set; } = 10000;
 
         public HttpHost Host { get; set; }
 
@@ -111,9 +88,11 @@ namespace BeetleX.Http.Clients
             object result;
             if (!mAPI.TryGetValue(type, out result))
             {
-                result = DispatchProxy.Create<T, HttpApiProxy>();
+                result = DispatchProxy.Create<T, HttpInterfaceProxy>();
+
                 mAPI[type] = result;
-                ((HttpApiProxy)result).Host = Host;
+                ((HttpInterfaceProxy)result).Host = Host;
+                ((HttpInterfaceProxy)result).TimeOut = TimeOut;
             }
             return (T)result;
         }

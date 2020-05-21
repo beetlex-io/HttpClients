@@ -1,7 +1,9 @@
 ﻿using BeetleX.Clients;
+using BeetleX.Tasks;
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Security.Authentication;
 using System.Text;
 using System.Threading.Tasks;
 
@@ -14,8 +16,7 @@ namespace BeetleX.Http.Clients
         {
             Host = host;
             Port = port;
-            TimeOut = 10000;
-            Async = true;
+            TimeOut = 5000;
             MaxConnections = 100;
             Clients = new List<HttpClient>();
             SSL = ssl;
@@ -39,7 +40,7 @@ namespace BeetleX.Http.Clients
 
         public int TimeOut { get; set; }
 
-        public bool Async { get; set; }
+        public SslProtocols? SslProtocols { get; set; }
 
         public HttpClient Pop(bool recursion = false)
         {
@@ -58,18 +59,18 @@ namespace BeetleX.Http.Clients
                     {
                         for (int i = 0; i < Clients.Count; i++)
                         {
-                            HttpClient client = Clients[i];
-                            if (client.IsTimeout && client.Using)
+                            HttpClient httpclient = Clients[i];
+                            if (httpclient.IsTimeout && httpclient.Using)
                             {
                                 Task.Run(() =>
                                 {
                                     try
                                     {
-                                        client.RequestCommpletionSource.Error(new TimeoutException($"{Host}:{Port} request timeout!"));
+                                        httpclient.RequestCommpletionSource.Error(new TimeoutException($"{Host}:{Port} request timeout!"));
                                     }
                                     finally
                                     {
-                                        client.Client.DisConnect();
+                                        httpclient.Client.DisConnect();
                                     }
                                 });
                             }
@@ -79,55 +80,36 @@ namespace BeetleX.Http.Clients
                     }
                 }
                 var packet = new HttpClientPacket();
-                if (Async)
+
+                AsyncTcpClient client;
+                if (SSL)
                 {
-                    AsyncTcpClient client;
-                    if (SSL)
-                    {
-                        client = SocketFactory.CreateSslClient<AsyncTcpClient>(packet, Host, Port, Host);
-                    }
-                    else
-                    {
-                        client = SocketFactory.CreateClient<AsyncTcpClient>(packet, Host, Port);
-                    }
-                    packet.Client = client;
-                    client.Connected = c =>
-                    {
-                        c.Socket.NoDelay = true;
-                        c.Socket.ReceiveTimeout = TimeOut;
-                        c.Socket.SendTimeout = TimeOut;
-                    };
-                    result = new HttpClient();
-                    result.Client = client;
-                    result.Node = new LinkedListNode<HttpClient>(result);
-                    Clients.Add(result);
+                    client = SocketFactory.CreateSslClient<AsyncTcpClient>(packet, Host, Port, Host);
+                    client.CertificateValidationCallback = (o, e, d, f) => true;
                 }
                 else
                 {
-                    TcpClient client;
-                    if (SSL)
-                    {
-                        client = SocketFactory.CreateSslClient<TcpClient>(packet, Host, Port, Host);
-                    }
-                    else
-                    {
-                        client = SocketFactory.CreateClient<TcpClient>(packet, Host, Port);
-                    }
-                    packet.Client = client;
-                    client.Connected = c =>
-                    {
-                        c.Socket.NoDelay = true;
-                        c.Socket.ReceiveTimeout = TimeOut;
-                        c.Socket.SendTimeout = TimeOut;
-                    };
-                    result = new HttpClient();
-                    result.Client = client;
-                    result.Node = new LinkedListNode<HttpClient>(result);
-                    Clients.Add(result);
+                    client = SocketFactory.CreateClient<AsyncTcpClient>(packet, Host, Port);
+                    client.CertificateValidationCallback = (o, e, d, f) => true;
                 }
+                if (this.SslProtocols != null)
+                    client.SslProtocols = this.SslProtocols;
+                packet.Client = client;
+                client.Connected = c =>
+                {
+                    c.Socket.NoDelay = true;
+                    c.Socket.ReceiveTimeout = TimeOut;
+                    c.Socket.SendTimeout = TimeOut;
+                };
+                result = new HttpClient();
+                result.Client = client;
+                result.Node = new LinkedListNode<HttpClient>(result);
+                Clients.Add(result);
+
+
             }
             result.Using = true;
-            result.TimeOut = BeetleX.TimeWatch.GetElapsedMilliseconds() + TimeOut * 1000;
+            result.TimeOut = TimeOut;
             return result;
         }
 
@@ -146,7 +128,7 @@ namespace BeetleX.Http.Clients
 
         public HttpClientPool Pool { get; set; }
 
-        internal long TimeOut { get; set; }
+        public int TimeOut { get; set; }
 
         public bool Using { get; set; }
 
@@ -165,21 +147,21 @@ namespace BeetleX.Http.Clients
     public class HttpClientPoolFactory
     {
 
-        private static System.Collections.Concurrent.ConcurrentDictionary<string, HttpClientPool> mPools = new System.Collections.Concurrent.ConcurrentDictionary<string, HttpClientPool>();
+        private static System.Collections.Concurrent.ConcurrentDictionary<string, HttpClientPool> mPools
+            = new System.Collections.Concurrent.ConcurrentDictionary<string, HttpClientPool>(StringComparer.OrdinalIgnoreCase);
 
         public static System.Collections.Concurrent.ConcurrentDictionary<string, HttpClientPool> Pools => mPools;
 
-        public static void SetPoolInfo(Uri host, int maxConn, int timeout, bool async = true)
+        public static void SetPoolInfo(Uri host, int maxConn, int timeout)
         {
             HttpClientPool pool = GetPool(null, host);
             pool.MaxConnections = maxConn;
             pool.TimeOut = timeout;
-            pool.Async = async;
         }
 
-        public static void SetPoolInfo(string host, int maxConn, int timeout, bool async = true)
+        public static void SetPoolInfo(string host, int maxConn, int timeout)
         {
-            SetPoolInfo(new Uri(host), maxConn, timeout, async);
+            SetPoolInfo(new Uri(host), maxConn, timeout);
         }
 
         public static HttpClientPool GetPool(string key, Uri uri)
@@ -251,7 +233,7 @@ namespace BeetleX.Http.Clients
 
         public int Port { get; set; }
 
-        public IClientBodyFormater Formater { get; set; }
+        public IBodyFormater Formater { get; set; }
 
         public Uri Uri { get; private set; }
 
@@ -299,7 +281,17 @@ namespace BeetleX.Http.Clients
             return result;
         }
 
-        public Request Put(string url, Dictionary<string, string> header, Dictionary<string, string> queryString, Dictionary<string, object> data, IClientBodyFormater formater, Type bodyType = null)
+        public Request Put(string url, object data)
+        {
+            return Put(url, data, new FormUrlFormater(), null);
+        }
+
+        public Request Put(string url, object data, IBodyFormater formater, Type bodyType = null)
+        {
+            return Put(url, null, null, data, formater, bodyType);
+        }
+
+        public Request Put(string url, Dictionary<string, string> header, Dictionary<string, string> queryString, object data, IBodyFormater formater, Type bodyType = null)
         {
             Request request = new Request();
             request.Method = Request.PUT;
@@ -318,7 +310,18 @@ namespace BeetleX.Http.Clients
             return request;
         }
 
-        public Request Post(string url, Dictionary<string, string> header, Dictionary<string, string> queryString, Dictionary<string, object> data, IClientBodyFormater formater, Type bodyType = null)
+
+        public Request Post(string url, object data)
+        {
+            return Post(url, null, null, data, new FormUrlFormater(), null);
+        }
+
+        public Request Post(string url, object data, IBodyFormater formater, Type bodyType = null)
+        {
+            return Post(url, null, null, data, formater, bodyType);
+        }
+
+        public Request Post(string url, Dictionary<string, string> header, Dictionary<string, string> queryString, object data, IBodyFormater formater, Type bodyType = null)
         {
             Request request = new Request();
             request.Method = Request.POST;
@@ -338,7 +341,16 @@ namespace BeetleX.Http.Clients
             return request;
         }
 
-        public Request Delete(string url, Dictionary<string, string> header, Dictionary<string, string> queryString, IClientBodyFormater formater, Type bodyType = null)
+        public Request Delete(string url)
+        {
+            return Delete(url, new FormUrlFormater(), null);
+        }
+        public Request Delete(string url, IBodyFormater formater, Type bodyType = null)
+        {
+            return Delete(url, null, null, formater, bodyType);
+        }
+
+        public Request Delete(string url, Dictionary<string, string> header, Dictionary<string, string> queryString, IBodyFormater formater, Type bodyType = null)
         {
             Request request = new Request();
             request.Header = new Header();
@@ -354,8 +366,15 @@ namespace BeetleX.Http.Clients
             request.HttpHost = this;
             return request;
         }
-
-        public Request Get(string url, Dictionary<string, string> header, Dictionary<string, string> queryString, IClientBodyFormater formater, Type bodyType = null)
+        public Request Get(string url)
+        {
+            return Get(url, null, null, new FormUrlFormater(), null);
+        }
+        public Request Get(string url, IBodyFormater formater, Type bodyType = null)
+        {
+            return Get(url, null, null, formater, bodyType);
+        }
+        public Request Get(string url, Dictionary<string, string> header, Dictionary<string, string> queryString, IBodyFormater formater, Type bodyType = null)
         {
             Request request = new Request();
             request.Header = new Header();

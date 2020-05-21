@@ -1,13 +1,15 @@
 ﻿using BeetleX.Clients;
+using BeetleX.Tasks;
 using System;
 using System.Collections.Generic;
+using System.Net.Security;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace BeetleX.Http.WebSockets
 {
-    public abstract class WSClient : IDisposable
+    public class WSClient : IDisposable
     {
 
         public WSClient(string host) : this(new Uri(host)) { }
@@ -30,15 +32,21 @@ namespace BeetleX.Http.WebSockets
 
         private AsyncTcpClient mNetClient;
 
-        private bool OnSocketConnected = false;
+        private long mSends = 0;
 
-        private Queue<DataFrame> mReceiveMessages = new Queue<DataFrame>();
+        private long mReceives = 0;
+
+        public int TimeOut { get; set; } = 10 * 1000;
+
+        private System.Collections.Concurrent.ConcurrentQueue<object> mDataFrames = new System.Collections.Concurrent.ConcurrentQueue<object>();
+
+        private bool OnWSConnected = false;
 
         private void OnPacketCompleted(IClient client, object message)
         {
             if (message is DataFrame dataFrame)
             {
-                OnPushReceiveMessage(dataFrame);
+                OnReceiveMessage(dataFrame);
             }
             else
             {
@@ -46,15 +54,39 @@ namespace BeetleX.Http.WebSockets
             }
         }
 
+        public AsyncTcpClient Client => mNetClient;
+
         public DateTime PingPongTime { get; set; }
 
         public event System.EventHandler<WSReceiveArgs> DataReceive;
 
-        public async Task Ping()
+        public void Ping()
         {
             DataFrame pong = new DataFrame();
             pong.Type = DataPacketType.ping;
-            await Send(pong);
+            SendFrame(pong);
+        }
+
+        public virtual byte[] GetFrameDataBuffer(int length)
+        {
+            return new byte[length];
+        }
+
+        public virtual void FreeFrameDataBuffer(byte[] data)
+        {
+
+        }
+
+        internal void FrameWrited(DataFrame frame)
+        {
+            OnDataFrameWrited(frame);
+        }
+
+
+
+        protected virtual void OnDataFrameWrited(DataFrame frame)
+        {
+
         }
 
         protected virtual void OnDataReceive(WSReceiveArgs e)
@@ -67,15 +99,16 @@ namespace BeetleX.Http.WebSockets
             {
                 try
                 {
-                    e.Message = new BXException($"ws client receive error {e_.Message}", e_);
+                    e.Error = new BXException($"ws client receive error {e_.Message}", e_);
                     DataReceive?.Invoke(this, e);
                 }
                 catch { }
             }
         }
 
-        protected virtual void OnPushReceiveMessage(DataFrame message)
+        protected virtual void OnReceiveMessage(DataFrame message)
         {
+            System.Threading.Interlocked.Increment(ref mReceives);
             if (message.Type == DataPacketType.connectionClose)
             {
                 Dispose();
@@ -89,66 +122,115 @@ namespace BeetleX.Http.WebSockets
                 {
                     DataFrame pong = new DataFrame();
                     pong.Type = DataPacketType.pong;
-                    Send(pong);
+                    SendFrame(pong);
                 }
                 return;
             }
-            lock (mReceiveMessages)
+            else
             {
-                if (mReceiveDompletionSource != null)
-                {
-                    var result = mReceiveDompletionSource;
-                    mReceiveDompletionSource = null;
-                    Task.Run(() =>
-                    {
-                        result.TrySetResult(message);                  
-                    });
-
-                }
-                else
-                {
-                    mReceiveMessages.Enqueue(message);
-                }
+                OnDataReceive(message);
             }
 
         }
 
-        private TaskCompletionSource<DataFrame> mReceiveDompletionSource;
+        private object mLockReceive = new object();
 
-        private (DataFrame, Task<DataFrame>) OnPopReceiveMessage()
+        protected virtual void OnDataReceive(DataFrame data)
         {
-            lock (mReceiveMessages)
+            lock (mLockReceive)
             {
-                (DataFrame, Task<DataFrame>) result = default;
-                if (mReceiveMessages.Count > 0)
+                if (DataReceive != null)
                 {
-                    result.Item1 = mReceiveMessages.Dequeue();
+                    WSReceiveArgs e = new WSReceiveArgs();
+                    e.Client = this;
+                    e.Frame = data;
+                    DataReceive(this, e);
                 }
                 else
                 {
-                    mReceiveDompletionSource = new TaskCompletionSource<DataFrame>();
-                    result.Item2 = mReceiveDompletionSource.Task;
+                    if (mReceiveCompletionSource != null)
+                    {
+                        var result = mReceiveCompletionSource;
+                        mReceiveCompletionSource = null;
+                        Task.Run(() => result.Success(data));
+                    }
+                    else
+                    {
+                        mDataFrames.Enqueue(data);
+                    }
                 }
-
-                return result;
             }
         }
 
+        private IAnyCompletionSource mReceiveCompletionSource;
+
+        private void OnReceiveTimeOut(IAnyCompletionSource source)
+        {
+            if (mReceiveCompletionSource != null)
+            {
+                var completed = mReceiveCompletionSource;
+                mReceiveCompletionSource = null;
+                Task.Run(() =>
+                {
+                    completed?.Error(new BXException("Websocket receive time out!"));
+                });
+                return;
+            }
+        }
+
+        public Task<DataFrame> ReceiveFrame()
+        {
+            Connect();
+            lock (mLockReceive)
+            {
+                if (mDataFrames.TryDequeue(out object data))
+                {
+                    if (data is Exception error)
+                        throw error;
+                    return Task.FromResult((DataFrame)data);
+                }
+                else
+                {
+                    mReceiveCompletionSource = CompletionSourceFactory.Create<DataFrame>(TimeOut);
+                    mReceiveCompletionSource.TimeOut = OnReceiveTimeOut;
+                    return (Task<DataFrame>)mReceiveCompletionSource.GetTask();
+                }
+            }
+
+        }
         private void OnClientError(IClient c, ClientErrorArgs e)
         {
-            if (OnSocketConnected)
+            if (OnWSConnected)
             {
                 if (e.Error is BXException)
                 {
-                    OnSocketConnected = false;
+                    OnWSConnected = false;
                 }
-                if (mReceiveDompletionSource != null)
+                lock (mLockReceive)
                 {
-                    Task.Run(() =>
+                    if (mReceiveCompletionSource != null)
                     {
-                        mReceiveDompletionSource.TrySetException(e.Error);
-                        mReceiveDompletionSource = null;
-                    });
+                        var completed = mReceiveCompletionSource;
+                        mReceiveCompletionSource = null;
+                        Task.Run(() =>
+                        {
+                            completed.Error(e.Error);
+                        });
+                        return;
+                    }
+                }
+
+                if (DataReceive != null)
+                {
+                    try
+                    {
+                        WSReceiveArgs wse = new WSReceiveArgs();
+                        wse.Client = this;
+                        wse.Error = e.Error;
+                        DataReceive?.Invoke(this, wse);
+                    }
+                    catch { }
+
                 }
             }
             else
@@ -159,6 +241,8 @@ namespace BeetleX.Http.WebSockets
         }
 
         private TaskCompletionSource<bool> mWScompletionSource;
+
+
 
         private void OnWriteConnect()
         {
@@ -180,140 +264,104 @@ namespace BeetleX.Http.WebSockets
 
         private object mLockConnect = new object();
 
-        private Task<bool> OnConnect()
-        {
-            if (!OnSocketConnected || mNetClient == null || !mNetClient.IsConnected)
-            {
-                lock (mLockConnect)
-                {
-                    if (OnSocketConnected && mNetClient == null && !mNetClient.IsConnected)
-                    {
+        public bool IsConnected => OnWSConnected && mNetClient != null && mNetClient.IsConnected;
 
-                        return Task.FromResult(true);
-                    }
-                    mWScompletionSource = new TaskCompletionSource<bool>();
-                    if (mNetClient == null)
+        public void Connect()
+        {
+            if (IsConnected)
+            {
+                return;
+            }
+            lock (mLockConnect)
+            {
+                if (IsConnected)
+                {
+                    return;
+                }
+                mWScompletionSource = new TaskCompletionSource<bool>();
+                if (mNetClient == null)
+                {
+                    string protocol = Host.Scheme.ToLower();
+                    if (!(protocol == "ws" || protocol == "wss"))
                     {
-                        string protocol = Host.Scheme.ToLower();
-                        if (!(protocol == "ws" || protocol == "wss"))
-                        {
-                            OnConnectResponse(new BXException("protocol error! host must [ws|wss]//host:port"), null);
-                            return mWScompletionSource.Task;
-                        }
-                        WSPacket wSPacket = new WSPacket
-                        {
-                            WSClient = this
-                        };
-                        if (Host.Scheme.ToLower() == "wss")
-                        {
-                            mNetClient = SocketFactory.CreateSslClient<AsyncTcpClient>(wSPacket, Host.Host, Host.Port, SSLAuthenticateName);
-                        }
-                        else
-                        {
-                            mNetClient = SocketFactory.CreateClient<AsyncTcpClient>(wSPacket, Host.Host, Host.Port);
-                        }
-                        mNetClient.LittleEndian = false;
-                        mNetClient.PacketReceive = OnPacketCompleted;
-                        mNetClient.ClientError = OnClientError;
+                        OnConnectResponse(new BXException("protocol error! host must [ws|wss]//host:port"), null);
+                        mWScompletionSource.Task.Wait();
                     }
-                    mReceiveMessages.Clear();
-                    if (mNetClient.Connect())
+                    WSPacket wSPacket = new WSPacket
                     {
-                        OnWriteConnect();
+                        WSClient = this
+                    };
+                    if (Host.Scheme.ToLower() == "wss")
+                    {
+                        mNetClient = SocketFactory.CreateSslClient<AsyncTcpClient>(wSPacket, Host.Host, Host.Port, SSLAuthenticateName);
+                        mNetClient.CertificateValidationCallback = CertificateValidationCallback;
                     }
                     else
                     {
-                        OnConnectResponse(mNetClient.LastError, null);
+                        mNetClient = SocketFactory.CreateClient<AsyncTcpClient>(wSPacket, Host.Host, Host.Port);
                     }
-                    return mWScompletionSource.Task;
+                    mNetClient.LittleEndian = false;
+                    mNetClient.PacketReceive = OnPacketCompleted;
+                    mNetClient.ClientError = OnClientError;
                 }
-            }
-            else
-            {
-                return Task.FromResult(OnSocketConnected);
+                mDataFrames = new System.Collections.Concurrent.ConcurrentQueue<object>();
+                bool isNew;
+                if (mNetClient.Connect(out isNew))
+                {
+                    OnWriteConnect();
+                }
+                else
+                {
+                    OnConnectResponse(mNetClient.LastError, null);
+                }
+                mWScompletionSource.Task.Wait(5000);
+                if (!OnWSConnected)
+                    throw new TimeoutException($"Connect {Host} websocket server timeout!");
             }
         }
 
+        public RemoteCertificateValidationCallback CertificateValidationCallback { get; set; }
+
         protected virtual void OnConnectResponse(Exception exception, Response response)
-        {      
+        {
             Response = response;
             Task.Run(() =>
             {
                 if (exception != null)
                 {
-                    OnSocketConnected = false;
+                    OnWSConnected = false;
                     mWScompletionSource?.TrySetException(exception);
                 }
                 else
                 {
-                    if (response.Code != 101)
+                    if (response.Code == 101)
                     {
-                        OnSocketConnected = false;
-                        mWScompletionSource?.TrySetException(new BXException($"ws connect error {response.Code} {response.Message}"));
+                        OnWSConnected = true;
+                        mWScompletionSource?.TrySetResult(true);
 
                     }
                     else
                     {
-                        Open();
-                        OnSocketConnected = true;  
-                        mWScompletionSource?.TrySetResult(true);
-                        
+                        OnWSConnected = false;
+                        mWScompletionSource?.TrySetException(new BXException($"ws connect error {response.Code} {response.Message}"));
 
                     }
-                }
-                mWScompletionSource = null;
-            });
-        }
-
-        private void Open()
-        {
-            Task.Run(async () => {
-                while (true)
-                {
-                    WSReceiveArgs args = new WSReceiveArgs();
-                    try
-                    {
-                        var frame = await Receive();
-                        args.Client = this;
-                        args.Frame = frame;
-                    }
-                    catch (Exception e_)
-                    {
-                        args.Error = e_;
-                        break;
-                    }
-                    OnDataReceive(args);
                 }
             });
         }
 
-        private async Task<DataFrame> Receive()
+        public void SendFrame(DataFrame data)
         {
-            await OnConnect();
-            var result = OnPopReceiveMessage();
-            if (result.Item1 != null)
-            {
-                return result.Item1;
-            }
-            else
-            {
-                var df = await result.Item2;
-                return df;
-            }
-
-        }
-
-        protected async Task Send(DataFrame data)
-        {
-            await OnConnect();
+            Connect();
+            data.Client = this;
             data.MaskKey = this.MaskKey;
             mNetClient.Send(data);
-
+            System.Threading.Interlocked.Increment(ref mSends);
         }
 
         public void Dispose()
         {
-            OnSocketConnected = false;
+            OnWSConnected = false;
             mNetClient.DisConnect();
             mNetClient = null;
         }

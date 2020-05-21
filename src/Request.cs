@@ -1,8 +1,10 @@
 ﻿using BeetleX.Buffers;
 using BeetleX.Clients;
+using BeetleX.Tasks;
 using System;
 using System.Collections.Generic;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace BeetleX.Http.Clients
@@ -31,7 +33,7 @@ namespace BeetleX.Http.Clients
             this.HttpProtocol = "HTTP/1.1";
         }
 
-        public IClientBodyFormater Formater { get; set; } = new JsonFormater();
+        public IBodyFormater Formater { get; set; } = new JsonFormater();
 
         public Dictionary<string, string> QuestryString { get; set; }
 
@@ -48,6 +50,8 @@ namespace BeetleX.Http.Clients
         public Object Body { get; set; }
 
         public Type BodyType { get; set; }
+
+        public int? TimeOut { get; set; }
 
         public RequestStatus Status { get; set; }
 
@@ -124,25 +128,40 @@ namespace BeetleX.Http.Clients
 
         public HttpHost HttpHost { get; set; }
 
+        public Action<AsyncTcpClient> GetConnection { get; set; }
+
         public Task<Response> Execute()
         {
-            AnyCompletionSource<Response> taskCompletionSource = new AnyCompletionSource<Response>();
-            OnExecute(taskCompletionSource);
-            return taskCompletionSource.Task;
+            mTaskCompletionSource = CompletionSourceFactory.Create<Response>(TimeOut != null ? TimeOut.Value : HttpHost.Pool.TimeOut); // new AnyCompletionSource<Response>();
+            mTaskCompletionSource.TimeOut = OnRequestTimeout;
+            OnExecute();
+            return (Task<Response>)mTaskCompletionSource.GetTask();
         }
 
-        private async void OnExecute(AnyCompletionSource<Response> taskCompletionSource)
+        private IAnyCompletionSource mTaskCompletionSource;
+
+        private void OnRequestTimeout(IAnyCompletionSource source)
+        {
+            Response response = new Response();
+            response.Code = "408";
+            response.CodeMsg = "Request timeout";
+            response.Exception = new HttpClientException(this, HttpHost.Uri, "Request timeout");
+            source?.Success(response);
+        }
+
+        private async void OnExecute()
         {
             HttpClient client = null;
             Response response;
             try
             {
                 client = HttpHost.Pool.Pop();
-                client.RequestCommpletionSource = taskCompletionSource;
+                client.RequestCommpletionSource = mTaskCompletionSource;
                 Client = client.Client;
                 if (client.Client is AsyncTcpClient)
                 {
                     AsyncTcpClient asyncClient = (AsyncTcpClient)client.Client;
+                    GetConnection?.Invoke(asyncClient);
                     var a = asyncClient.ReceiveMessage();
                     if (!a.IsCompleted)
                     {
@@ -177,7 +196,7 @@ namespace BeetleX.Http.Clients
                     {
                         try
                         {
-                            if (code ==200)
+                            if (code == 200)
                                 response.Body = this.Formater.Deserialization(response, response.Stream, this.BodyType, response.Length);
                             else
                                 response.Body = response.Stream.ReadString(response.Length);
@@ -194,7 +213,7 @@ namespace BeetleX.Http.Clients
                         client.Client.DisConnect();
                     if (code != 200)
                     {
-                        response.Exception = new HttpClientException(this, HttpHost.Uri, $"({response.Code}){Url} \r\nresponse text:[{response.Body}]");
+                        response.Exception = new HttpClientException(this, HttpHost.Uri, $"{Url}({response.Code}) [{response.Body}]");
                         response.Exception.Code = code;
                     }
                     Status = RequestStatus.Completed;
@@ -216,7 +235,7 @@ namespace BeetleX.Http.Clients
             {
                 HttpHost.Pool.Push(client);
             }
-            await Task.Run(() => taskCompletionSource.TrySetResult(response));
+            Task.Run(() => mTaskCompletionSource.Success(response));
         }
     }
 

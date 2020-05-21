@@ -17,14 +17,16 @@ namespace BeetleX.Http.WebSockets
     }
 
 
-    public class DataFrame 
+    public class DataFrame
     {
-        internal DataFrame()
+        public DataFrame()
         {
             this.FIN = true;
             Type = DataPacketType.text;
             IsMask = false;
         }
+
+        internal WSClient Client { get; set; }
 
         const int CHECK_B1 = 0x1;
 
@@ -46,13 +48,15 @@ namespace BeetleX.Http.WebSockets
 
         public bool RSV1 { get; set; }
 
+        public bool IsBroadcast { get; set; } = false;
+
         public bool RSV2 { get; set; }
 
         public bool RSV3 { get; set; }
 
         public DataPacketType Type { get; set; }
 
-        public byte[] Body { get; set; }
+        public ArraySegment<byte>? Body { get; set; }
 
         public bool IsMask { get; set; }
 
@@ -64,7 +68,7 @@ namespace BeetleX.Http.WebSockets
 
         private DataPacketLoadStep mLoadStep = DataPacketLoadStep.None;
 
-        internal DataPacketLoadStep Read(PipeStream stream)
+        internal DataPacketLoadStep Read(PipeStream stream, WSClient client)
         {
             if (mLoadStep == DataPacketLoadStep.None)
             {
@@ -126,11 +130,13 @@ namespace BeetleX.Http.WebSockets
             {
                 if (this.Length > 0 && (ulong)stream.Length >= this.Length)
                 {
+                    var len = (int)this.Length;
                     if (this.IsMask)
                         ReadMask(stream);
                     // Body = this.DataPacketSerializer.FrameDeserialize(this, stream);
-                    Body = new byte[this.Length];
-                    stream.Read(Body, 0, (int)this.Length);
+                    var data = client.GetFrameDataBuffer(len);
+                    stream.Read(data, 0, len);
+                    Body = new ArraySegment<byte>(data, 0, len);
                     mLoadStep = DataPacketLoadStep.Completed;
                 }
             }
@@ -193,11 +199,13 @@ namespace BeetleX.Http.WebSockets
                 header[0] |= (byte)Type;
                 if (Body != null)
                 {
-                    ArraySegment<byte> data = new ArraySegment<byte>(Body, 0, Body.Length); //this.DataPacketSerializer.FrameSerialize(this, Body);
+                    ArraySegment<byte> data = Body.Value; 
                     try
                     {
                         if (MaskKey == null || MaskKey.Length != 4)
                             this.IsMask = false;
+                        else
+                            this.IsMask = true;
                         if (this.IsMask)
                         {
                             header[1] |= CHECK_B8;
@@ -231,7 +239,8 @@ namespace BeetleX.Http.WebSockets
                     }
                     finally
                     {
-                       // this.DataPacketSerializer.FrameRecovery(data.Array);
+                        Client?.FreeFrameDataBuffer(data.Array);
+
                     }
                 }
                 else
