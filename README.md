@@ -42,24 +42,34 @@ httpClusterApi.GetUrlNode("/employee.*")
     .Add("http://192.168.2.27:8080")
     .Add("http://192.168.2.28:8080");
 ```
+### github auth sample
+``` csharp
+    [FormUrlFormater]
+    [Host("https://github.com")]
+    public interface IGithubAuth
+    {
+
+        [Get(Route = "login/oauth/access_token")]
+        Task<string> GetToken(string client_id, string client_secret, string code);
+
+        [Host("https://api.github.com")]
+        [CHeader("User-Agent", "beetlex.io")]
+        [Get(Route = "user")]
+        Task<string> GetUser(string access_token);
+    }
+     githubAuth = HttpApiClient.Create<IGithubAuth>();
+```
 
 ### Websocket
 ### Create wsclient
 ```
 TextClient client = new TextClient("ws://echo.websocket.org");
-
-```
-### receive event
-```
-client.DataReceive += (o, e)=>{
-       Console.WriteLine(e.Message);
-};
 ```
 ### send text
 ```
- await client.Write("hello");
+ await client.Send("hello");
 ```
 ### send and receive
 ```
-var result = await client.SyncWrite("hello");
+var resutl = await wss.ReceiveFrom("hello henry");
 ```
