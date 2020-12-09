@@ -1,17 +1,18 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>netstandard2.0</TargetFramework>
+    <TargetFrameworks>netcoreapp2.1;netstandard2.0</TargetFrameworks>
     <LangVersion>7.3</LangVersion>
     <PackageId>BeetleX.Http.Clients</PackageId>
-    <Version>1.2.5.9</Version>
+    <Version>1.3.5</Version>
     <Authors>henryfan</Authors>
     <Company>beetlex.io</Company>
     <Copyright>Copyright © beetlex.io 2019-2020 email:admin@beetlex.io</Copyright>
     <PackageProjectUrl>https://github.com/IKende/FastHttpApi</PackageProjectUrl>
     <Description>http webapi and websocket client for .net</Description>
-    <AssemblyVersion>1.2.5.9</AssemblyVersion>
-    <PackageIconUrl>https://raw.githubusercontent.com/IKende/BeetleX/master/beetlexlogo.png</PackageIconUrl>
+    <AssemblyVersion>1.3.5.0</AssemblyVersion>
+    <PackageIconUrl></PackageIconUrl>
+    <PackageIcon>beetlex200.png</PackageIcon>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
@@ -23,10 +24,23 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="BeetleX" Version="1.5.1.7" />
+    <PackageReference Include="BeetleX" Version="1.6.3" />
     <PackageReference Include="BeetleX.Tasks" Version="0.7.5" />
     <PackageReference Include="Newtonsoft.Json" Version="12.0.2" />
     <PackageReference Include="System.Reflection.DispatchProxy" Version="4.5.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\..\..\beetlex200.png">
+      <Pack>True</Pack>
+      <PackagePath></PackagePath>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'netcoreapp2.1'">
+    <PackageReference Include="BeetleX.Tracks">
+      <Version>0.7.5</Version>
+    </PackageReference>
   </ItemGroup>
 
 </Project>

@@ -6,7 +6,10 @@ using System.Collections.Generic;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-
+using System.Diagnostics;
+#if NETCOREAPP2_1
+using BeetleX.Tracks;
+#endif
 namespace BeetleX.Http.Clients
 {
     public enum LoadedState : int
@@ -17,8 +20,29 @@ namespace BeetleX.Http.Clients
         Completed = 8
     }
 
+#if NETCOREAPP2_1
+    public class Request : IApiObject
+#else
     public class Request
+#endif
     {
+#if NETCOREAPP2_1
+
+        private CodeTrack mRequestTrack;
+
+        public string Name => this.Url;
+
+        public string[] Group
+        {
+            get
+            {
+                return new[] { "HTTPClient", "Request", $"{HttpHost.Host}" };
+            }
+        }
+#endif
+
+        public const string CODE_TREAK_PARENTID = "TrackParentID";
+
         public const string POST = "POST";
 
         public const string GET = "GET";
@@ -130,12 +154,26 @@ namespace BeetleX.Http.Clients
 
         public Action<AsyncTcpClient> GetConnection { get; set; }
 
-        public Task<Response> Execute()
+        public static event Action<Request> Executing;
+
+        public async Task<Response> Execute()
         {
-            mTaskCompletionSource = CompletionSourceFactory.Create<Response>(TimeOut != null ? TimeOut.Value : HttpHost.Pool.TimeOut); // new AnyCompletionSource<Response>();
-            mTaskCompletionSource.TimeOut = OnRequestTimeout;
-            OnExecute();
-            return (Task<Response>)mTaskCompletionSource.GetTask();
+#if NETCOREAPP2_1
+            using (mRequestTrack = CodeTrackFactory.TrackReport(this, CodeTrackLevel.Module, null))
+            {
+                if (Activity.Current != null)
+                    Header[CODE_TREAK_PARENTID] = Activity.Current.Id;
+                if (mRequestTrack.Enabled)
+                    mRequestTrack.Activity?.AddTag("tag", "BeetleX HttpClient");
+#endif
+                Executing?.Invoke(this);
+                mTaskCompletionSource = CompletionSourceFactory.Create<Response>(TimeOut != null ? TimeOut.Value : HttpHost.Pool.TimeOut); // new AnyCompletionSource<Response>();
+                mTaskCompletionSource.TimeOut = OnRequestTimeout;
+                OnExecute();
+                return await (Task<Response>)mTaskCompletionSource.GetTask();
+#if NETCOREAPP2_1
+            }
+#endif
         }
 
         private IAnyCompletionSource mTaskCompletionSource;
@@ -149,46 +187,65 @@ namespace BeetleX.Http.Clients
             source?.Success(response);
         }
 
+        private void onEventClientError(IClient c, ClientErrorArgs e)
+        {
+            requestResult.TrySetResult(e.Error);
+        }
+
+        private void OnEventClientPacketCompleted(IClient client, object message)
+        {
+            requestResult.TrySetResult(message);
+        }
+
+        private TaskCompletionSource<object> requestResult;
+
         private async void OnExecute()
         {
-            HttpClient client = null;
+            HttpClientHandler client = null;
             Response response;
             try
             {
-                client = HttpHost.Pool.Pop();
-                client.RequestCommpletionSource = mTaskCompletionSource;
+                object result = null;
+                client = await HttpHost.Pool.Pop();
                 Client = client.Client;
-                if (client.Client is AsyncTcpClient)
+                requestResult = new TaskCompletionSource<object>();
+                AsyncTcpClient asyncClient = (AsyncTcpClient)client.Client;
+                asyncClient.ClientError = onEventClientError;
+                asyncClient.PacketReceive = OnEventClientPacketCompleted;
+                GetConnection?.Invoke(asyncClient);
+#if NETCOREAPP2_1
+                using (CodeTrackFactory.Track(Url, CodeTrackLevel.Function, mRequestTrack?.Activity?.Id, "HTTPClient", "Protocol", "Write"))
                 {
-                    AsyncTcpClient asyncClient = (AsyncTcpClient)client.Client;
-                    GetConnection?.Invoke(asyncClient);
-                    var a = asyncClient.ReceiveMessage();
-                    if (!a.IsCompleted)
-                    {
-                        asyncClient.Send(this);
-                        Status = RequestStatus.SendCompleted;
-                    }
-                    var result = await a;
-                    if (result is Exception error)
-                    {
-                        response = new Response();
-                        response.Exception = new HttpClientException(this, HttpHost.Uri, error.Message, error);
-                        Status = RequestStatus.Error;
-                    }
-                    else
-                    {
-                        response = (Response)result;
-                        Status = RequestStatus.Received;
-                    }
+                    asyncClient.Send(this);
+                    Status = RequestStatus.SendCompleted;
+                }
+#else
+                    asyncClient.Send(this);
+                    Status = RequestStatus.SendCompleted;
+#endif
+
+#if NETCOREAPP2_1
+                using (CodeTrackFactory.Track(Url, CodeTrackLevel.Function, mRequestTrack?.Activity?.Id, "HTTPClient", "Protocol", "Read"))
+                {
+                    var a = requestResult.Task;
+                    result = await a;
+                }
+#else
+                    var a = requestResult.Task;
+                    result = await a;
+#endif
+                if (result is Exception error)
+                {
+                    response = new Response();
+                    response.Exception = new HttpClientException(this, HttpHost.Uri, error.Message, error);
+                    Status = RequestStatus.Error;
                 }
                 else
                 {
-                    TcpClient syncClient = (TcpClient)client.Client;
-                    syncClient.SendMessage(this);
-                    Status = RequestStatus.SendCompleted;
-                    response = syncClient.ReceiveMessage<Response>();
+                    response = (Response)result;
                     Status = RequestStatus.Received;
                 }
+
                 if (response.Exception == null)
                 {
                     int code = int.Parse(response.Code);
@@ -233,9 +290,14 @@ namespace BeetleX.Http.Clients
             this.Response = response;
             if (client != null)
             {
+                if (client.Client is AsyncTcpClient asclient)
+                {
+                    asclient.ClientError = null;
+                    asclient.PacketReceive = null;
+                }
                 HttpHost.Pool.Push(client);
             }
-            Task.Run(() => mTaskCompletionSource.Success(response));
+            await Task.Run(() => mTaskCompletionSource.Success(response));
         }
     }
 

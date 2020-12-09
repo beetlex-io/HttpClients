@@ -28,17 +28,17 @@ namespace BeetleX.Http.Clients
         public string Route { get; set; }
     }
     [AttributeUsage(AttributeTargets.Method | AttributeTargets.Interface | AttributeTargets.Parameter, AllowMultiple = true)]
-    public class CHeaderAttribute : Attribute
+    public class HeaderAttribute : Attribute
     {
-        public CHeaderAttribute()
+        public HeaderAttribute()
         {
 
         }
-        public CHeaderAttribute(string name)
+        public HeaderAttribute(string name)
         {
             Name = name;
         }
-        public CHeaderAttribute(string name, string value)
+        public HeaderAttribute(string name, string value)
         {
             Name = name;
             Value = value;
@@ -48,18 +48,18 @@ namespace BeetleX.Http.Clients
         public string Value { get; set; }
     }
     [AttributeUsage(AttributeTargets.Parameter | AttributeTargets.Method | AttributeTargets.Interface, AllowMultiple = true)]
-    public class CQueryAttribute : Attribute
+    public class QueryAttribute : Attribute
     {
-        public CQueryAttribute()
+        public QueryAttribute()
         {
 
         }
 
-        public CQueryAttribute(string name)
+        public QueryAttribute(string name)
         {
             Name = name;
         }
-        public CQueryAttribute(string name, string value)
+        public QueryAttribute(string name, string value)
         {
             Name = name;
             Value = value;

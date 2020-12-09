@@ -2,25 +2,32 @@
 using BeetleX.Tasks;
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Net.Http.Headers;
+using System.Net.Security;
 using System.Reflection;
 using System.Security.Authentication;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace BeetleX.Http.Clients
 {
 
-    public class HttpClientPool
+    public class HttpClientHandlerPool
     {
-        public HttpClientPool(string host, int port, bool ssl = false)
+        public HttpClientHandlerPool(Uri uri)
         {
-            Host = host;
-            Port = port;
+            mUri = uri;
+            Host = uri.Host;
+            Port = uri.Port;
             TimeOut = 5000;
             MaxConnections = 100;
-            Clients = new List<HttpClient>();
-            SSL = ssl;
+            Clients = new List<HttpClientHandler>();
+            SSL = uri.Scheme.IndexOf("https", StringComparison.OrdinalIgnoreCase) >= 0;
         }
+
+        private Uri mUri;
 
         public bool SSL { get; set; }
 
@@ -28,133 +35,138 @@ namespace BeetleX.Http.Clients
 
         public int Port { get; set; }
 
-        private System.Collections.Concurrent.ConcurrentQueue<HttpClient> mPools = new System.Collections.Concurrent.ConcurrentQueue<HttpClient>();
+        public int MaxWaitLength { get; set; } = 20;
 
-        public List<HttpClient> Clients { get; private set; }
+        private Stack<HttpClientHandler> mPools = new Stack<HttpClientHandler>();
 
-        private int mConnections = 0;
+        private Queue<TaskCompletionSource<HttpClientHandler>> mWaitQueue = new Queue<TaskCompletionSource<HttpClientHandler>>();
+
+        public List<HttpClientHandler> Clients { get; private set; }
 
         public int MaxConnections { get; set; }
 
-        public int Connections => mConnections;
+        public int Connections => Clients.Count;
 
         public int TimeOut { get; set; }
 
-        public SslProtocols? SslProtocols { get; set; }
+        public SslProtocols? SslProtocols { get; set; } = System.Security.Authentication.SslProtocols.Tls | System.Security.Authentication.SslProtocols.Tls11 | System.Security.Authentication.SslProtocols.Tls12;
 
-        public HttpClient Pop(bool recursion = false)
+        public RemoteCertificateValidationCallback CertificateValidationCallback { get; set; }
+
+        public Task<HttpClientHandler> Pop()
         {
-            HttpClient result;
-            if (!mPools.TryDequeue(out result))
+            lock (this)
             {
-                int value = System.Threading.Interlocked.Increment(ref mConnections);
-                if (value > MaxConnections)
+                if (mPools.Count > 0)
                 {
-                    System.Threading.Interlocked.Decrement(ref mConnections);
-                    if (recursion)
-                    {
-                        throw new Exception($"Unable to reach {Host}:{Port} HTTP request, exceeding maximum number of connections");
-                    }
-                    else
-                    {
-                        for (int i = 0; i < Clients.Count; i++)
-                        {
-                            HttpClient httpclient = Clients[i];
-                            if (httpclient.IsTimeout && httpclient.Using)
-                            {
-                                Task.Run(() =>
-                                {
-                                    try
-                                    {
-                                        httpclient.RequestCommpletionSource.Error(new TimeoutException($"{Host}:{Port} request timeout!"));
-                                    }
-                                    finally
-                                    {
-                                        httpclient.Client.DisConnect();
-                                    }
-                                });
-                            }
-                        }
-                        System.Threading.Thread.Sleep(50);
-                        return Pop(true);
-                    }
+                    var result = mPools.Pop();
+                    result.Using = true;
+                    result.TimeOut = BeetleX.TimeWatch.GetElapsedMilliseconds() + TimeOut;
+                    return Task.FromResult(result);
                 }
-                var packet = new HttpClientPacket();
-
-                AsyncTcpClient client;
-                if (SSL)
+                if (Clients.Count < MaxConnections)
                 {
-                    client = SocketFactory.CreateSslClient<AsyncTcpClient>(packet, Host, Port, Host);
-                    client.CertificateValidationCallback = (o, e, d, f) => true;
+                    var result = Create();
+                    result.Using = true;
+                    result.TimeOut = BeetleX.TimeWatch.GetElapsedMilliseconds() + TimeOut;
+                    return Task.FromResult(result);
+                }
+                if (mWaitQueue.Count < MaxWaitLength)
+                {
+                    TaskCompletionSource<HttpClientHandler> completionSource = new TaskCompletionSource<HttpClientHandler>();
+                    mWaitQueue.Enqueue(completionSource);
+                    return completionSource.Task;
                 }
                 else
                 {
-                    client = SocketFactory.CreateClient<AsyncTcpClient>(packet, Host, Port);
-                    client.CertificateValidationCallback = (o, e, d, f) => true;
+                    throw new HttpClientException($"Request {Host} connections limit");
                 }
-                if (this.SslProtocols != null)
-                    client.SslProtocols = this.SslProtocols;
-                packet.Client = client;
-                client.Connected = c =>
-                {
-                    c.Socket.NoDelay = true;
-                    c.Socket.ReceiveTimeout = TimeOut;
-                    c.Socket.SendTimeout = TimeOut;
-                };
-                result = new HttpClient();
-                result.Client = client;
-                result.Node = new LinkedListNode<HttpClient>(result);
-                Clients.Add(result);
-
 
             }
-            result.Using = true;
-            result.TimeOut = TimeOut;
+        }
+
+        public void Push(HttpClientHandler client)
+        {
+            TaskCompletionSource<HttpClientHandler> result = null;
+            lock (this)
+            {
+                if (mWaitQueue.Count > 0)
+                {
+                    result = mWaitQueue.Dequeue();
+                    client.Using = true;
+                    client.TimeOut = BeetleX.TimeWatch.GetElapsedMilliseconds() + TimeOut;
+                }
+                else
+                {
+                    client.Using = false;
+                    mPools.Push(client);
+                }
+            }
+
+            if (result != null)
+            {
+                Task.Run(() => result.SetResult(client));
+            }
+        }
+
+        private HttpClientHandler Create()
+        {
+            var packet = new HttpClientPacket();
+            AsyncTcpClient client;
+            if (SSL)
+            {
+                client = SocketFactory.CreateSslClient<AsyncTcpClient>(packet, Host, Port, Host);
+                if (CertificateValidationCallback != null)
+                    client.CertificateValidationCallback = CertificateValidationCallback;
+                else
+                    client.CertificateValidationCallback = (o, e, d, f) => true;
+            }
+            else
+            {
+                client = SocketFactory.CreateClient<AsyncTcpClient>(packet, Host, Port);
+            }
+            if (this.SslProtocols != null)
+                client.SslProtocols = this.SslProtocols;
+            packet.Client = client;
+            client.Connected = c =>
+            {
+                c.Socket.NoDelay = true;
+                c.Socket.ReceiveTimeout = TimeOut;
+                c.Socket.SendTimeout = TimeOut;
+            };
+            var result = new HttpClientHandler();
+            result.Using = false;
+            result.Client = client;
+            lock (Clients)
+                Clients.Add(result);
             return result;
         }
 
-        public void Push(HttpClient client)
-        {
-            client.Using = false;
-            mPools.Enqueue(client);
-        }
     }
 
-    public class HttpClient
+    public class HttpClientHandler
     {
         public IClient Client { get; set; }
 
-        public LinkedListNode<HttpClient> Node { get; set; }
+        public HttpClientHandlerPool Pool { get; set; }
 
-        public HttpClientPool Pool { get; set; }
-
-        public int TimeOut { get; set; }
+        public long TimeOut { get; set; }
 
         public bool Using { get; set; }
-
-        public bool IsTimeout
-        {
-            get
-            {
-                return BeetleX.TimeWatch.GetElapsedMilliseconds() > TimeOut;
-            }
-        }
-
-        internal IAnyCompletionSource RequestCommpletionSource { get; set; }
 
     }
 
     public class HttpClientPoolFactory
     {
 
-        private static System.Collections.Concurrent.ConcurrentDictionary<string, HttpClientPool> mPools
-            = new System.Collections.Concurrent.ConcurrentDictionary<string, HttpClientPool>(StringComparer.OrdinalIgnoreCase);
+        private static System.Collections.Concurrent.ConcurrentDictionary<string, HttpClientHandlerPool> mPools
+            = new System.Collections.Concurrent.ConcurrentDictionary<string, HttpClientHandlerPool>(StringComparer.OrdinalIgnoreCase);
 
-        public static System.Collections.Concurrent.ConcurrentDictionary<string, HttpClientPool> Pools => mPools;
+        public static System.Collections.Concurrent.ConcurrentDictionary<string, HttpClientHandlerPool> Pools => mPools;
 
         public static void SetPoolInfo(Uri host, int maxConn, int timeout)
         {
-            HttpClientPool pool = GetPool(null, host);
+            HttpClientHandlerPool pool = GetPool(null, host);
             pool.MaxConnections = maxConn;
             pool.TimeOut = timeout;
         }
@@ -164,25 +176,24 @@ namespace BeetleX.Http.Clients
             SetPoolInfo(new Uri(host), maxConn, timeout);
         }
 
-        public static HttpClientPool GetPool(string key, Uri uri)
+        public static HttpClientHandlerPool GetPool(string key, Uri uri)
         {
             if (string.IsNullOrEmpty(key))
                 key = $"{uri.Host}:{uri.Port}";
-            HttpClientPool result;
+            HttpClientHandlerPool result;
             if (mPools.TryGetValue(key, out result))
                 return result;
             return CreatePool(key, uri);
         }
 
-        private static HttpClientPool CreatePool(string key, Uri uri)
+        private static HttpClientHandlerPool CreatePool(string key, Uri uri)
         {
             lock (typeof(HttpClientPoolFactory))
             {
-                HttpClientPool result;
+                HttpClientHandlerPool result;
                 if (!mPools.TryGetValue(key, out result))
                 {
-                    bool ssl = uri.Scheme.ToLower() == "https";
-                    result = new HttpClientPool(uri.Host, uri.Port, ssl);
+                    result = new HttpClientHandlerPool(uri);
                     mPools[key] = result;
                 }
                 return result;
@@ -209,7 +220,7 @@ namespace BeetleX.Http.Clients
             InVerify = false;
         }
 
-        private HttpClientPool mPool;
+        private HttpClientHandlerPool mPool;
 
         public long ID { get; set; }
 
@@ -223,7 +234,7 @@ namespace BeetleX.Http.Clients
 
         public int Weight { get; set; }
 
-        public HttpClientPool Pool => mPool;
+        public HttpClientHandlerPool Pool => mPool;
 
         private string mPoolKey;
 

@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.30011.22
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "BeetleX.Http.Clients", "BeetleX.Http.Clients.csproj", "{215A0412-8895-4701-B6ED-EF35FD24A4E9}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{215A0412-8895-4701-B6ED-EF35FD24A4E9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{215A0412-8895-4701-B6ED-EF35FD24A4E9}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{215A0412-8895-4701-B6ED-EF35FD24A4E9}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{215A0412-8895-4701-B6ED-EF35FD24A4E9}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {E04E3631-16CD-4B19-A97A-EE3DEC6B7452}
+	EndGlobalSection
+EndGlobal

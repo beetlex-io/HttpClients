@@ -27,10 +27,11 @@ namespace BeetleX.Http.Clients
             if (host == null)
                 throw new Exception("The service host is not defined!");
             var request = rinfo.GetRequest(host);
+            request.TimeOut = TimeOut;
             var task = request.Execute();
             if (!handler.Async)
             {
-                throw new HttpClientException(request, Host.Uri, $"{rinfo.Method} method is not supported and the return value must be task!");
+                throw new HttpClientException(request, host.Uri, $"{targetMethod.Name} method invoke not supported, the return value must be task!");
             }
             else
             {
@@ -53,12 +54,30 @@ namespace BeetleX.Http.Clients
 
     public class HttpApiClient
     {
-        public HttpApiClient(string host)
+        internal HttpApiClient(string host)
         {
             Host = new HttpHost(host);
         }
 
-        public static T Create<T>(int timeout)
+        private static Dictionary<string, HttpApiClient> mClients = new Dictionary<string, HttpApiClient>(StringComparer.OrdinalIgnoreCase);
+
+        public static T Create<T>(string host, int timeout = 10000)
+        {
+            lock (typeof(HttpApiClient))
+            {
+                if (!mClients.TryGetValue(host, out HttpApiClient client))
+                {
+                    client = new HttpApiClient(host);
+                    client.TimeOut = timeout;
+                }
+                object result;
+                result = client.Create<T>();
+                ((HttpInterfaceProxy)result).TimeOut = timeout;
+                return (T)result;
+            }
+        }
+
+        public static T Create<T>(int timeout = 10000)
         {
             object result;
             result = DispatchProxy.Create<T, HttpInterfaceProxy>();

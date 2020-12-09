@@ -6,6 +6,9 @@ using System.Net.Security;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+#if NETCOREAPP2_1
+using BeetleX.Tracks;
+#endif
 
 namespace BeetleX.Http.WebSockets
 {
@@ -278,45 +281,52 @@ namespace BeetleX.Http.WebSockets
                 {
                     return;
                 }
-                mWScompletionSource = new TaskCompletionSource<bool>();
-                if (mNetClient == null)
+#if NETCOREAPP2_1
+                using (CodeTrackFactory.Track($"Connect {Host}", CodeTrackLevel.Function, null, "Websocket", "Client"))
                 {
-                    string protocol = Host.Scheme.ToLower();
-                    if (!(protocol == "ws" || protocol == "wss"))
+#endif
+                    mWScompletionSource = new TaskCompletionSource<bool>();
+                    if (mNetClient == null)
                     {
-                        OnConnectResponse(new BXException("protocol error! host must [ws|wss]//host:port"), null);
-                        mWScompletionSource.Task.Wait();
+                        string protocol = Host.Scheme.ToLower();
+                        if (!(protocol == "ws" || protocol == "wss"))
+                        {
+                            OnConnectResponse(new BXException("protocol error! host must [ws|wss]//host:port"), null);
+                            mWScompletionSource.Task.Wait();
+                        }
+                        WSPacket wSPacket = new WSPacket
+                        {
+                            WSClient = this
+                        };
+                        if (Host.Scheme.ToLower() == "wss")
+                        {
+                            mNetClient = SocketFactory.CreateSslClient<AsyncTcpClient>(wSPacket, Host.Host, Host.Port, SSLAuthenticateName);
+                            mNetClient.CertificateValidationCallback = CertificateValidationCallback;
+                        }
+                        else
+                        {
+                            mNetClient = SocketFactory.CreateClient<AsyncTcpClient>(wSPacket, Host.Host, Host.Port);
+                        }
+                        mNetClient.LittleEndian = false;
+                        mNetClient.PacketReceive = OnPacketCompleted;
+                        mNetClient.ClientError = OnClientError;
                     }
-                    WSPacket wSPacket = new WSPacket
+                    mDataFrames = new System.Collections.Concurrent.ConcurrentQueue<object>();
+                    bool isNew;
+                    if (mNetClient.Connect(out isNew))
                     {
-                        WSClient = this
-                    };
-                    if (Host.Scheme.ToLower() == "wss")
-                    {
-                        mNetClient = SocketFactory.CreateSslClient<AsyncTcpClient>(wSPacket, Host.Host, Host.Port, SSLAuthenticateName);
-                        mNetClient.CertificateValidationCallback = CertificateValidationCallback;
+                        OnWriteConnect();
                     }
                     else
                     {
-                        mNetClient = SocketFactory.CreateClient<AsyncTcpClient>(wSPacket, Host.Host, Host.Port);
+                        OnConnectResponse(mNetClient.LastError, null);
                     }
-                    mNetClient.LittleEndian = false;
-                    mNetClient.PacketReceive = OnPacketCompleted;
-                    mNetClient.ClientError = OnClientError;
+                    mWScompletionSource.Task.Wait(5000);
+                    if (!OnWSConnected)
+                        throw new TimeoutException($"Connect {Host} websocket server timeout!");
+#if NETCOREAPP2_1
                 }
-                mDataFrames = new System.Collections.Concurrent.ConcurrentQueue<object>();
-                bool isNew;
-                if (mNetClient.Connect(out isNew))
-                {
-                    OnWriteConnect();
-                }
-                else
-                {
-                    OnConnectResponse(mNetClient.LastError, null);
-                }
-                mWScompletionSource.Task.Wait(5000);
-                if (!OnWSConnected)
-                    throw new TimeoutException($"Connect {Host} websocket server timeout!");
+#endif
             }
         }
 

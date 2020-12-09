@@ -77,7 +77,7 @@ namespace BeetleX.Http.Clients
                     ReturnType = MethodInfo.ReturnType;
                 }
             }
-            foreach (CHeaderAttribute h in DeclaringType.GetCustomAttributes<CHeaderAttribute>())
+            foreach (HeaderAttribute h in DeclaringType.GetCustomAttributes<HeaderAttribute>())
             {
                 if (!string.IsNullOrEmpty(h.Name) && !string.IsNullOrEmpty(h.Value))
                 {
@@ -85,7 +85,7 @@ namespace BeetleX.Http.Clients
                 }
             }
 
-            foreach (CHeaderAttribute h in method.GetCustomAttributes<CHeaderAttribute>())
+            foreach (HeaderAttribute h in method.GetCustomAttributes<HeaderAttribute>())
             {
                 if (!string.IsNullOrEmpty(h.Name) && !string.IsNullOrEmpty(h.Value))
                 {
@@ -93,7 +93,7 @@ namespace BeetleX.Http.Clients
                 }
             }
 
-            foreach (CQueryAttribute q in DeclaringType.GetCustomAttributes<CQueryAttribute>())
+            foreach (QueryAttribute q in DeclaringType.GetCustomAttributes<QueryAttribute>())
             {
                 if (!string.IsNullOrEmpty(q.Name) && !string.IsNullOrEmpty(q.Value))
                 {
@@ -101,7 +101,7 @@ namespace BeetleX.Http.Clients
                 }
             }
 
-            foreach (CQueryAttribute q in method.GetCustomAttributes<CQueryAttribute>())
+            foreach (QueryAttribute q in method.GetCustomAttributes<QueryAttribute>())
             {
                 if (!string.IsNullOrEmpty(q.Name) && !string.IsNullOrEmpty(q.Value))
                 {
@@ -162,7 +162,7 @@ namespace BeetleX.Http.Clients
                 cap.ParameterType = p.ParameterType;
                 cap.Index = index;
                 index++;
-                CHeaderAttribute cHeader = p.GetCustomAttribute<CHeaderAttribute>();
+                HeaderAttribute cHeader = p.GetCustomAttribute<HeaderAttribute>();
                 if (cHeader != null)
                 {
                     if (!string.IsNullOrEmpty(cHeader.Name))
@@ -171,7 +171,7 @@ namespace BeetleX.Http.Clients
                 }
                 else
                 {
-                    CQueryAttribute cQuery = p.GetCustomAttribute<CQueryAttribute>();
+                    QueryAttribute cQuery = p.GetCustomAttribute<QueryAttribute>();
                     if (cQuery != null)
                     {
                         if (!string.IsNullOrEmpty(cQuery.Name))
