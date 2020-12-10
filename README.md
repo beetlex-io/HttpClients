@@ -1,5 +1,9 @@
 # HttpClients
 BeetleX http and websocket clients for .net standard2.0
+## Install
+```
+Install-Package BeetleX.Http.Clients -Version 1.3.5
+```
 ## WebApi
 ### Defined interface
 ``` csharp
