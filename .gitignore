@@ -1,0 +1,12 @@
+src/BeetleX.Http.Clients.csproj.user
+src/.vs/BeetleX.Http.Clients/v15/
+src/bin/
+src/obj/
+src/Northwind.Data/bin/
+src/Northwind.Data/obj/
+src/BeetleX.Http.Clients.UnitTest/obj/
+src/BeetleX.Http.Clients.UnitTest/bin/
+src/.vs/BeetleX.Http.Clients/v16/
+src/.vs/BeetleX.HttpClients/v16/
+src/.vs/BeetleX.HttpClients/DesignTimeBuild/
+src/Northwind.Data/Properties/

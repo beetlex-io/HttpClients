@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 
 using System.Text;
+using System.Threading;
 
 namespace BeetleX.Http.Clients
 {
@@ -84,18 +85,24 @@ namespace BeetleX.Http.Clients
             return mState;
         }
 
+        private static AsyncLocal<Response> mCurrent = new AsyncLocal<Response>();
 
-        [ThreadStatic]
-        private static Response mCurrent;
+        public T GetResult<T>()
+        {
+            if (Exception != null)
+                throw Exception;
+            return (T)Body;
+        }
+
         public static Response Current
         {
             get
             {
-                return mCurrent;
+                return mCurrent.Value;
             }
             set
             {
-                mCurrent = value;
+                mCurrent.Value = value;
             }
         }
     }

@@ -581,7 +581,7 @@ namespace BeetleX.Http.Clients
             Uri url = new Uri(host);
             if (mClients.Find(c => c.Host == url.Host && c.Port == url.Port) == null)
             {
-                var item = new HttpHost(host);
+                var item = HttpHost.GetHttpHost(host);//new HttpHost(host);
                 item.ID = mID << mClients.Count;
                 item.Weight = weight;
                 item.MaxRPS = 0;

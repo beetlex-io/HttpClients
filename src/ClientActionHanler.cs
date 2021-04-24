@@ -58,9 +58,9 @@ namespace BeetleX.Http.Clients
             var mhost = method.GetCustomAttribute<HostAttribute>(false);
             if (mhost != null)
                 host = mhost;
-            if(host !=null)
+            if (host != null)
             {
-                this.Host = new HttpHost(host.Host);
+                this.Host = HttpHost.GetHttpHost(host.Host);// new HttpHost(host.Host);
             }
             Async = false;
             if (MethodInfo.ReturnType != typeof(void))

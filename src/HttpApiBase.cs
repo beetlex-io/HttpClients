@@ -56,7 +56,7 @@ namespace BeetleX.Http.Clients
     {
         internal HttpApiClient(string host)
         {
-            Host = new HttpHost(host);
+            Host = HttpHost.GetHttpHost(host); //new HttpHost(host);
         }
 
         private static Dictionary<string, HttpApiClient> mClients = new Dictionary<string, HttpApiClient>(StringComparer.OrdinalIgnoreCase);

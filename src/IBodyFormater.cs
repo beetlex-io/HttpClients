@@ -13,9 +13,11 @@ namespace BeetleX.Http.Clients
     {
         string ContentType { get; }
 
-        void Serialization(object data, PipeStream stream);
+        void Serialization(Request request, object data, PipeStream stream);
 
         object Deserialization(Response response, BeetleX.Buffers.PipeStream stream, Type type, int length);
+
+        void Setting(Request request);
     }
 
     [AttributeUsage(AttributeTargets.Method | AttributeTargets.Interface | AttributeTargets.Class)]
@@ -23,9 +25,11 @@ namespace BeetleX.Http.Clients
     {
         public abstract string ContentType { get; }
 
-        public abstract void Serialization(object data, PipeStream stream);
+        public abstract void Serialization(Request request, object data, PipeStream stream);
 
         public abstract object Deserialization(Response response, BeetleX.Buffers.PipeStream stream, Type type, int length);
+
+        public virtual void Setting(Request request) { }
     }
 
     public class FormUrlFormater : FormaterAttribute
@@ -36,7 +40,7 @@ namespace BeetleX.Http.Clients
         {
             return stream.ReadString(length);
         }
-        public override void Serialization(object data, PipeStream stream)
+        public override void Serialization(Request request, object data, PipeStream stream)
         {
             if (data != null)
             {
@@ -58,7 +62,17 @@ namespace BeetleX.Http.Clients
                             }
                             else
                             {
-                                stream.Write(System.Net.WebUtility.UrlEncode(value.ToString()));
+                                if (value is IEnumerable subitems)
+                                {
+                                    List<string> values = new List<string>();
+                                    foreach (var v in subitems)
+                                        values.Add(v.ToString());
+                                    stream.Write(string.Join(",", values));
+                                }
+                                else
+                                {
+                                    stream.Write(System.Net.WebUtility.UrlEncode(value.ToString()));
+                                }
                             }
                             i++;
                         }
@@ -102,29 +116,153 @@ namespace BeetleX.Http.Clients
             }
         }
 
-        public override void Serialization(object data, PipeStream stream)
+        public override void Serialization(Request request, object data, PipeStream stream)
         {
-            using (stream.LockFree())
+
+            if (data != null)
             {
-                if (data != null)
+                if (data is string text)
                 {
-                    using (StreamWriter writer = new StreamWriter(stream))
+                    stream.Write(text);
+                }
+                else if (data is StringBuilder sb)
+                {
+                    stream.Write(sb);
+                }
+                else
+                {
+                    using (stream.LockFree())
                     {
-                        IDictionary dictionary = data as IDictionary;
-                        JsonSerializer serializer = new JsonSerializer();
-                        if (dictionary != null && dictionary.Count == 1)
+                        using (StreamWriter writer = new StreamWriter(stream))
                         {
-                            object[] vlaues = new object[dictionary.Count];
-                            dictionary.Values.CopyTo(vlaues, 0);
-                            serializer.Serialize(writer, vlaues[0]);
-                        }
-                        else
-                        {
-                            serializer.Serialize(writer, data);
+                            IDictionary dictionary = data as IDictionary;
+                            JsonSerializer serializer = new JsonSerializer();
+
+                            if (dictionary != null && dictionary.Count == 1)
+                            {
+                                object[] vlaues = new object[dictionary.Count];
+                                dictionary.Values.CopyTo(vlaues, 0);
+                                serializer.Serialize(writer, vlaues[0]);
+                            }
+                            else
+                            {
+                                serializer.Serialize(writer, data);
+                            }
+
                         }
                     }
                 }
             }
         }
     }
+
+    public class FromDataFormater : FormaterAttribute
+    {
+        public override string ContentType => "multipart/form-data";
+
+        public override void Setting(Request request)
+        {
+            request.Boundary = "----Beetlex.io" + DateTime.Now.ToString("yyyyMMddHHmmss");
+            var value = request.Header["Content-Type"];
+            value += "; boundary=" + request.Boundary;
+            request.Header["Content-Type"] = value;
+            base.Setting(request);
+
+        }
+
+        public override object Deserialization(Response response, PipeStream stream, Type type, int length)
+        {
+            return stream.ReadString(length);
+        }
+
+        public override void Serialization(Request request, object data, PipeStream stream)
+        {
+            if (data == null)
+                return;
+            if (data is IDictionary<string, object> dictionary)
+            {
+                foreach (var item in dictionary)
+                {
+                    stream.Write("--");
+                    stream.WriteLine(request.Boundary);
+                    if (item.Value is UploadFile uploadFile)
+                    {
+                        stream.WriteLine($"Content-Disposition: form-data; name=\"{item.Key}\"; filename=\"{uploadFile.Name}\"");
+                        stream.WriteLine($"Content-Type: binary");
+                        stream.WriteLine("");
+                        stream.Write(uploadFile.Data.Array, uploadFile.Data.Offset, uploadFile.Data.Count);
+                        stream.WriteLine("");
+                    }
+                    else if (item.Value is FileInfo file)
+                    {
+                        stream.WriteLine($"Content-Disposition: form-data; name=\"{item.Key}\"; filename=\"{file.Name}\"");
+                        stream.WriteLine($"Content-Type: binary");
+                        stream.WriteLine("");
+                        using (System.IO.Stream open = file.OpenRead())
+                        {
+                            open.CopyTo(stream);
+                        }
+                        stream.WriteLine("");
+                    }
+                    else
+                    {
+                        stream.WriteLine($"Content-Disposition: form-data; name=\"{item.Key}\"");
+                        stream.WriteLine("");
+                        if (item.Value is IEnumerable subitems)
+                        {
+                            List<string> values = new List<string>();
+                            foreach (var v in subitems)
+                                values.Add(v.ToString());
+                            stream.Write(string.Join(",", values));
+                        }
+                        else
+                        {
+                            stream.Write(item.Value.ToString());
+                        }
+                        stream.WriteLine("");
+                    }
+                }
+                if (dictionary.Count > 0)
+                {
+                    stream.Write("--");
+                    stream.Write(request.Boundary);
+                    stream.WriteLine("--");
+                }
+            }
+            else
+            {
+                throw new HttpClientException($"post data must be IDictionary<string, object>!");
+            }
+        }
+    }
+
+    public class BinaryFormater : FormaterAttribute
+    {
+        public override string ContentType => "application/octet-stream";
+
+        public override object Deserialization(Response response, PipeStream stream, Type type, int length)
+        {
+            var result = System.Buffers.ArrayPool<byte>.Shared.Rent(length);
+            stream.Read(result, 0, length);
+            return new ArraySegment<Byte>(result, 0, length);
+        }
+
+        public override void Serialization(Request request, object data, PipeStream stream)
+        {
+            if (data is Byte[] buffer)
+            {
+                stream.Write(buffer, 0, buffer.Length);
+            }
+            else if (data is ArraySegment<byte> array)
+            {
+                stream.Write(array.Array, array.Offset, array.Count);
+            }
+            else
+            {
+                throw new Exception("Commit data must be byte[] or ArraySegment<byte>");
+            }
+        }
+    }
+
+
 }

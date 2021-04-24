@@ -6,6 +6,7 @@ using System.Net.Security;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Net;
 #if NETCOREAPP2_1
 using BeetleX.Tracks;
 #endif
@@ -41,6 +42,8 @@ namespace BeetleX.Http.WebSockets
 
         public int TimeOut { get; set; } = 10 * 1000;
 
+        private Dictionary<string, object> mProperties = new Dictionary<string, object>();
+
         private System.Collections.Concurrent.ConcurrentQueue<object> mDataFrames = new System.Collections.Concurrent.ConcurrentQueue<object>();
 
         private bool OnWSConnected = false;
@@ -56,6 +59,23 @@ namespace BeetleX.Http.WebSockets
                 OnConnectResponse(null, message as Response);
             }
         }
+
+
+        public object Token { get; set; }
+
+        public object this[string name]
+        {
+            get
+            {
+                mProperties.TryGetValue(name, out object result);
+                return result;
+            }
+            set
+            {
+                mProperties[name] = value;
+            }
+        }
+
 
         public AsyncTcpClient Client => mNetClient;
 
@@ -140,16 +160,16 @@ namespace BeetleX.Http.WebSockets
 
         protected virtual void OnDataReceive(DataFrame data)
         {
-            lock (mLockReceive)
+            if (DataReceive != null)
             {
-                if (DataReceive != null)
-                {
-                    WSReceiveArgs e = new WSReceiveArgs();
-                    e.Client = this;
-                    e.Frame = data;
-                    DataReceive(this, e);
-                }
-                else
+                WSReceiveArgs e = new WSReceiveArgs();
+                e.Client = this;
+                e.Frame = data;
+                DataReceive(this, e);
+            }
+            else
+            {
+                lock (mLockReceive)
                 {
                     if (mReceiveCompletionSource != null)
                     {
@@ -265,6 +285,8 @@ namespace BeetleX.Http.WebSockets
             mNetClient.Stream.Flush();
         }
 
+        public EndPoint LocalEndPoint { get; set; }
+
         private object mLockConnect = new object();
 
         public bool IsConnected => OnWSConnected && mNetClient != null && mNetClient.IsConnected;
@@ -307,6 +329,7 @@ namespace BeetleX.Http.WebSockets
                         {
                             mNetClient = SocketFactory.CreateClient<AsyncTcpClient>(wSPacket, Host.Host, Host.Port);
                         }
+                        mNetClient.LocalEndPoint = this.LocalEndPoint;
                         mNetClient.LittleEndian = false;
                         mNetClient.PacketReceive = OnPacketCompleted;
                         mNetClient.ClientError = OnClientError;
@@ -321,7 +344,7 @@ namespace BeetleX.Http.WebSockets
                     {
                         OnConnectResponse(mNetClient.LastError, null);
                     }
-                    mWScompletionSource.Task.Wait(5000);
+                    mWScompletionSource.Task.Wait(10000);
                     if (!OnWSConnected)
                         throw new TimeoutException($"Connect {Host} websocket server timeout!");
 #if NETCOREAPP2_1

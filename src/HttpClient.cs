@@ -203,12 +203,30 @@ namespace BeetleX.Http.Clients
 
     public class HttpHost
     {
-        public HttpHost(string host) : this(new Uri(host))
+
+        private static System.Collections.Concurrent.ConcurrentDictionary<string, HttpHost> mHostPool
+            = new System.Collections.Concurrent.ConcurrentDictionary<string, HttpHost>(StringComparer.OrdinalIgnoreCase);
+
+        public static HttpHost GetHttpHost(Uri host)
+        {
+            return GetHttpHost(host.ToString());
+        }
+        public static HttpHost GetHttpHost(string host)
+        {
+            if (!mHostPool.TryGetValue(host, out HttpHost result))
+            {
+                result = new HttpHost(host);
+                mHostPool[host] = result;
+            }
+            return result;
+        }
+
+        protected HttpHost(string host) : this(new Uri(host))
         {
 
         }
 
-        public HttpHost(Uri host)
+        protected HttpHost(Uri host)
         {
             this.Uri = host;
             Formater = new FormUrlFormater();
@@ -285,6 +303,7 @@ namespace BeetleX.Http.Clients
             mError++;
         }
 
+
         public override string ToString()
         {
             string result = $"{mSuccess - mLastSuccess}/{mSuccess}";
@@ -296,6 +315,8 @@ namespace BeetleX.Http.Clients
         {
             return Put(url, data, new FormUrlFormater(), null);
         }
+
+
 
         public Request Put(string url, object data, IBodyFormater formater, Type bodyType = null)
         {
@@ -390,7 +411,7 @@ namespace BeetleX.Http.Clients
             Request request = new Request();
             request.Header = new Header();
             request.Formater = formater == null ? this.Formater : formater;
-            request.Header[HeaderTypeFactory.CONTENT_TYPE] = request.Formater.ContentType;
+            //request.Header[HeaderTypeFactory.CONTENT_TYPE] = request.Formater.ContentType;
             request.Header[HeaderTypeFactory.HOST] = Host;
             request.QuestryString = queryString;
             if (header != null)
@@ -404,5 +425,145 @@ namespace BeetleX.Http.Clients
 
     }
 
+    public class HttpBinaryClient : HttpClient<BinaryFormater>
+    {
+        public HttpBinaryClient(string host) : base(host)
+        {
+
+        }
+    }
+
+
+    public class HttpFormUrlClient : HttpClient<FormUrlFormater>
+    {
+        public HttpFormUrlClient(string host) : base(host)
+        {
+
+        }
+    }
+
+    public class HttpJsonClient : HttpClient<JsonFormater>
+    {
+        public HttpJsonClient(string host) : base(host)
+        {
+
+        }
+    }
+
+    public class HttpFormDataClient : HttpClient<FromDataFormater>
+    {
+        public HttpFormDataClient(string host) : base(host)
+        {
+
+        }
+    }
+
+    public class HttpClient<T>
+        where T : IBodyFormater, new()
+    {
+        public HttpClient(string host)
+        {
+            mHost = HttpHost.GetHttpHost(host);
+        }
+
+        private HttpHost mHost;
+
+        private Dictionary<string, string> mQueryString = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        private Dictionary<string, string> mHeader = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        private object mDataObject;
+
+        private Dictionary<string, object> mDataMap = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+
+        public HttpClient<T> Accept(string value)
+        {
+            mHeader["accept"] = value;
+            return this;
+        }
+
+        public HttpClient<T> Authorization(string value)
+        {
+            mHeader["authorization"] = value;
+            return this;
+        }
+
+        public HttpClient<T> SetHeader(string name, string value)
+        {
+            mHeader[name] = value;
+            return this;
+        }
+
+        public HttpClient<T> AddQueryString(string name, object value)
+        {
+            mQueryString[name] = value.ToString();
+            return this;
+        }
+
+        public HttpClient<T> SetBody(object data)
+        {
+            mDataObject = data;
+            return this;
+        }
+
+        public HttpClient<T> AddBodyFile(string name, string file)
+        {
+
+            AddBodyField(name, new FileInfo(file));
+            return this;
+        }
+
+        public HttpClient<T> AddBodyFile(string name, UploadFile file)
+        {
+            AddBodyField(name, file);
+            return this;
+        }
+
+        public HttpClient<T> AddBodyField(string name, object data)
+        {
+            mDataMap[name] = data;
+            return this;
+        }
+        public async Task<RESULT> Get<RESULT>(string url)
+        {
+            var response = await Get(url, typeof(RESULT));
+            return response.GetResult<RESULT>();
+        }
+        public Task<Response> Get(string url, Type bodyType = null)
+        {
+            var request = mHost.Get(url, mHeader, mQueryString, new T(), bodyType);
+            return request.Execute();
+        }
+        public async Task<RESULT> Post<RESULT>(string url)
+        {
+            var response = await Post(url, typeof(RESULT));
+            return response.GetResult<RESULT>();
+        }
+        public Task<Response> Post(string url, Type bodyType = null)
+        {
+            var request = mHost.Post(url, mHeader, mQueryString, mDataObject == null ? mDataMap : mDataObject, new T(), bodyType);
+            return request.Execute();
+        }
+        public async Task<RESULT> Put<RESULT>(string url)
+        {
+            var response = await Put(url, typeof(RESULT));
+            return response.GetResult<RESULT>();
+        }
+        public Task<Response> Put(string url, Type bodyType = null)
+        {
+            var request = mHost.Put(url, mHeader, mQueryString, mDataObject == null ? mDataMap : mDataObject, new T(), bodyType);
+            return request.Execute();
+        }
+        public async Task<RESULT> Delete<RESULT>(string url)
+        {
+            var response = await Delete(url, typeof(RESULT));
+            return response.GetResult<RESULT>();
+        }
+        public Task<Response> Delete(string url, Type bodyType = null)
+        {
+            var request = mHost.Delete(url, mHeader, mQueryString, new T(), bodyType);
+            return request.Execute();
+        }
+    }
 
 }
