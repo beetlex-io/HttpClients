@@ -2,57 +2,36 @@
 BeetleX http and websocket clients for .net standard2.0
 ## Install
 ```
-Install-Package BeetleX.Http.Clients -Version 1.5
+Install-Package BeetleX.Http.Clients -Version 1.6
 ```
 ``` csharp
-        [Fact]
-        public async Task HttpBin_Delete()
-        {
-            HttpJsonClient client = new HttpJsonClient("http://httpbin.org");
-            var result = await client.Delete("/delete");
-            Assert.Equal(null, result.Exception);
+            var result = await "https://www.baidu.com/"
+                    .FormUrlRequest()
+                    .Get();
+            Console.WriteLine(result.Body);
 
-        }
-        [Fact]
-        public async Task HttpBin_Get()
-        {
-            HttpJsonClient client = new HttpJsonClient("http://httpbin.org");
-            var result = await client.Get("/get");
-            Assert.Equal(null, result.Exception);
-        }
+            result = await "https://httpbin.org/get"
+                     .FormUrlRequest()
+                     .Get();
+            Console.WriteLine(result.Body);
 
-        [Fact]
-        public async Task HttpBin_Post()
-        {
-            HttpJsonClient client = new HttpJsonClient("http://httpbin.org");
-            var date = DateTime.Now;
-            client.SetBody(date);
-            var result = await client.Post("/post");
+
+            result = await "https://httpbin.org/post"
+                     .JsonRequest()
+                     .SetBody(DateTime.Now)
+                     .Post();
             JToken rdata = result.GetResult<JToken>()["data"];
-            Assert.Equal(date, rdata.ToObject<DateTime>());
-        }
-        [Fact]
-        public async Task HttpBin_Put()
-        {
-            HttpJsonClient client = new HttpJsonClient("http://httpbin.org");
-            Employee emp = DataHelper.Defalut.Employees[0];
-            client.SetBody(emp);
-            var result = await client.Post("/post");
-            JToken rdata = result.GetResult<JToken>()["data"];
-            Assert.Equal(emp.EmployeeID, rdata.ToObject<Employee>().EmployeeID);
-        }
-        [Fact]
-        public async Task GetImage()
-        {
-            HttpClient<BinaryFormater> client = new HttpClient<BinaryFormater>("http://httpbin.org");
-            var result = await client.Get("/image");
-            var data = result.GetResult<ArraySegment<byte>>();
-            using (System.IO.Stream write = System.IO.File.Create("test.jpg"))
-            {
-                write.Write(data.Array, data.Offset, data.Count);
-                write.Flush();
-            }
-        }
+
+            Console.WriteLine(rdata);
+
+
+            var buffer = await "https://httpbin.org/image"
+                           .BinaryRequest()
+                           .Download();
+
+             result = await "http://localhost/Upload"
+                           .FormDataRequest()
+                           .Upload("g:\\extension_1_4_3_0.rar", "g:\\extension_1_4_3_0_1.rar");
 ```
 
 ## WebApi
