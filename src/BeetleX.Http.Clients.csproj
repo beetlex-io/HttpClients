@@ -4,13 +4,13 @@
     <TargetFrameworks>netstandard2.0;netcoreapp2.1;netcoreapp3.1;net5.0</TargetFrameworks>
     <LangVersion>7.3</LangVersion>
     <PackageId>BeetleX.Http.Clients</PackageId>
-    <Version>1.5</Version>
+    <Version>1.6.2</Version>
     <Authors>henryfan</Authors>
     <Company>beetlex.io</Company>
     <Copyright>Copyright © beetlex.io 2019-2021 email:admin@beetlex.io</Copyright>
     <PackageProjectUrl>https://github.com/beetlex-io/HttpClients</PackageProjectUrl>
     <Description>http webapi and websocket client for .net</Description>
-    <AssemblyVersion>1.5.0.0</AssemblyVersion>
+    <AssemblyVersion>1.6.0.0</AssemblyVersion>
     <PackageIconUrl></PackageIconUrl>
     <PackageIcon>beetlex200.png</PackageIcon>
   </PropertyGroup>
@@ -25,12 +25,15 @@
 
   <ItemGroup>
     <Compile Remove="BeetleX.Http.Clients.UnitTest\**" />
+    <Compile Remove="Northwind.Data\**" />
     <EmbeddedResource Remove="BeetleX.Http.Clients.UnitTest\**" />
+    <EmbeddedResource Remove="Northwind.Data\**" />
     <None Remove="BeetleX.Http.Clients.UnitTest\**" />
+    <None Remove="Northwind.Data\**" />
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="BeetleX" Version="1.6.5.41" />
+    <PackageReference Include="BeetleX" Version="1.6.6.3" />
     <PackageReference Include="BeetleX.Tasks" Version="0.7.5" />
     <PackageReference Include="Newtonsoft.Json" Version="12.0.2" />
     <PackageReference Include="System.Reflection.DispatchProxy" Version="4.5.1" />

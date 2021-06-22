@@ -21,7 +21,7 @@ namespace BeetleX.Http.Clients
             mUri = uri;
             Host = uri.Host;
             Port = uri.Port;
-            TimeOut = 5000;
+            TimeOut = 20000;
             MaxConnections = 100;
             Clients = new List<HttpClientHandler>();
             SSL = uri.Scheme.IndexOf("https", StringComparison.OrdinalIgnoreCase) >= 0;
@@ -36,6 +36,8 @@ namespace BeetleX.Http.Clients
         public int Port { get; set; }
 
         public int MaxWaitLength { get; set; } = 20;
+
+        private int mInitConnections = 0;
 
         private Stack<HttpClientHandler> mPools = new Stack<HttpClientHandler>();
 
@@ -55,33 +57,65 @@ namespace BeetleX.Http.Clients
 
         public Task<HttpClientHandler> Pop()
         {
+            HttpClientHandler result;
+            TaskCompletionSource<HttpClientHandler> completionSource;
             lock (this)
             {
                 if (mPools.Count > 0)
                 {
-                    var result = mPools.Pop();
+                    result = mPools.Pop();
                     result.Using = true;
                     result.TimeOut = BeetleX.TimeWatch.GetElapsedMilliseconds() + TimeOut;
                     return Task.FromResult(result);
                 }
-                if (Clients.Count < MaxConnections)
+                if (Clients.Count > MaxConnections)
                 {
-                    var result = Create();
-                    result.Using = true;
-                    result.TimeOut = BeetleX.TimeWatch.GetElapsedMilliseconds() + TimeOut;
-                    return Task.FromResult(result);
-                }
-                if (mWaitQueue.Count < MaxWaitLength)
-                {
-                    TaskCompletionSource<HttpClientHandler> completionSource = new TaskCompletionSource<HttpClientHandler>();
-                    mWaitQueue.Enqueue(completionSource);
-                    return completionSource.Task;
-                }
-                else
-                {
-                    throw new HttpClientException($"Request {Host} connections limit");
+                    if (mWaitQueue.Count < MaxWaitLength)
+                    {
+                        completionSource = new TaskCompletionSource<HttpClientHandler>();
+                        mWaitQueue.Enqueue(completionSource);
+                        return completionSource.Task;
+                    }
+                    else
+                    {
+                        throw new HttpClientException($"Request {Host} connections limit");
+                    }
                 }
 
+            }
+            completionSource = new TaskCompletionSource<HttpClientHandler>();
+            mCreateDispatchCenter.Next().Enqueue(
+                new CreateClientTask { ClientHandlerPool = this, CompletionSource = completionSource });
+            return completionSource.Task;
+            //result = Create();
+            //result.Using = true;
+            //result.TimeOut = BeetleX.TimeWatch.GetElapsedMilliseconds() + TimeOut;
+            //return Task.FromResult(result);
+
+        }
+
+        struct CreateClientTask
+        {
+            public TaskCompletionSource<HttpClientHandler> CompletionSource;
+
+            public HttpClientHandlerPool ClientHandlerPool;
+        }
+
+        private static BeetleX.Dispatchs.DispatchCenter<CreateClientTask> mCreateDispatchCenter
+            = new Dispatchs.DispatchCenter<CreateClientTask>(OnProcessCreateClient, 20);
+
+        private static void OnProcessCreateClient(CreateClientTask e)
+        {
+            try
+            {
+                var result = e.ClientHandlerPool.Create();
+                result.Using = true;
+                result.TimeOut = BeetleX.TimeWatch.GetElapsedMilliseconds() + e.ClientHandlerPool.TimeOut;
+                e.CompletionSource.TrySetResult(result);
+            }
+            catch (Exception e_)
+            {
+                e.CompletionSource.TrySetException(e_);
             }
         }
 
@@ -111,6 +145,7 @@ namespace BeetleX.Http.Clients
 
         private HttpClientHandler Create()
         {
+
             var packet = new HttpClientPacket();
             AsyncTcpClient client;
             if (SSL)
@@ -125,8 +160,8 @@ namespace BeetleX.Http.Clients
             {
                 client = SocketFactory.CreateClient<AsyncTcpClient>(packet, Host, Port);
             }
-            if (this.SslProtocols != null)
-                client.SslProtocols = this.SslProtocols;
+            //if (this.SslProtocols != null)
+            //    client.SslProtocols = this.SslProtocols;
             packet.Client = client;
             client.Connected = c =>
             {
@@ -134,6 +169,8 @@ namespace BeetleX.Http.Clients
                 c.Socket.ReceiveTimeout = TimeOut;
                 c.Socket.SendTimeout = TimeOut;
             };
+            bool newconn;
+            client.Connect(out newconn);
             var result = new HttpClientHandler();
             result.Using = false;
             result.Client = client;
@@ -141,6 +178,8 @@ namespace BeetleX.Http.Clients
                 Clients.Add(result);
             return result;
         }
+
+
 
     }
 
@@ -169,6 +208,7 @@ namespace BeetleX.Http.Clients
             HttpClientHandlerPool pool = GetPool(null, host);
             pool.MaxConnections = maxConn;
             pool.TimeOut = timeout;
+            //pool.CreateConnection(maxConn);
         }
 
         public static void SetPoolInfo(string host, int maxConn, int timeout)
@@ -431,14 +471,69 @@ namespace BeetleX.Http.Clients
         {
 
         }
-    }
 
+        public async Task<byte[]> Download()
+        {
+            var result = await Get();
+            var data = result.GetResult<ArraySegment<byte>>();
+            try
+            {
+                var r = new byte[data.Count];
+                System.Buffer.BlockCopy(data.Array, data.Offset, r, 0, data.Count);
+                return r;
+            }
+            finally
+            {
+                System.Buffers.ArrayPool<byte>.Shared.Return(data.Array);
+            }
+        }
+
+        public async Task Download(string file)
+        {
+            var result = await Get();
+            var data = result.GetResult<ArraySegment<byte>>();
+            try
+            {
+                using (System.IO.Stream write = System.IO.File.Create(file))
+                {
+                    write.Write(data.Array, data.Offset, data.Count);
+                    write.Flush();
+                }
+            }
+            finally
+            {
+                System.Buffers.ArrayPool<byte>.Shared.Return(data.Array);
+            }
+
+        }
+    }
 
     public class HttpFormUrlClient : HttpClient<FormUrlFormater>
     {
         public HttpFormUrlClient(string host) : base(host)
         {
 
+        }
+
+        public override HttpClient<FormUrlFormater> SetBody(object data)
+        {
+            if (data != null)
+            {
+                var properties = GetProperties(data);
+
+                foreach (var p in properties)
+                {
+                    string name = p.Name;
+                    var value = p.GetValue(data, null);
+                    SetBodyFields(name, value);
+                }
+            }
+            return this;
+        }
+
+        private static PropertyInfo[] GetProperties(object obj)
+        {
+            return obj.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
         }
     }
 
@@ -456,6 +551,50 @@ namespace BeetleX.Http.Clients
         {
 
         }
+
+        public override HttpClient<FromDataFormater> SetBody(object data)
+        {
+            if (data != null)
+            {
+                var properties = GetProperties(data);
+
+                foreach (var p in properties)
+                {
+                    string name = p.Name;
+                    var value = p.GetValue(data, null);
+                    SetBodyFields(name, value);
+                }
+            }
+            return this;
+        }
+
+        private static PropertyInfo[] GetProperties(object obj)
+        {
+            return obj.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
+        }
+
+
+        public async Task<Response> Upload(params string[] files)
+        {
+            foreach (var item in files)
+            {
+                var info = new FileInfo(item);
+                SetBodyFiles(info.Name, item);
+            }
+            var result = await Post();
+            if (result.Exception != null)
+                throw result.Exception;
+            return result;
+        }
+
+        public async Task<Response> Upload(string name, byte[] data)
+        {
+            SetBodyFiles(name, new UploadFile { Data = new ArraySegment<byte>(data), Name = name });
+            var result = await Post();
+            if (result.Exception != null)
+                throw result.Exception;
+            return result;
+        }
     }
 
     public class HttpClient<T>
@@ -464,6 +603,10 @@ namespace BeetleX.Http.Clients
         public HttpClient(string host)
         {
             mHost = HttpHost.GetHttpHost(host);
+            Uri uri = new Uri(host);
+            RequestUrl = uri.PathAndQuery;
+            if (string.IsNullOrEmpty(RequestUrl))
+                throw new HttpClientException("Request URL invalid!");
         }
 
         private HttpHost mHost;
@@ -476,92 +619,114 @@ namespace BeetleX.Http.Clients
 
         private Dictionary<string, object> mDataMap = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
 
-        public HttpClient<T> Accept(string value)
+        public virtual HttpClient<T> Accept(string value)
         {
             mHeader["accept"] = value;
             return this;
         }
 
-        public HttpClient<T> Authorization(string value)
+        public int? TimeOut { get; set; }
+
+
+        public virtual HttpClient<T> SetTimeout(int timeout)
+        {
+            this.TimeOut = timeout;
+            return this;
+        }
+
+        public virtual HttpClient<T> Authorization(string value)
         {
             mHeader["authorization"] = value;
             return this;
         }
 
-        public HttpClient<T> SetHeader(string name, string value)
+        public virtual HttpClient<T> Cookie(string value)
+        {
+            mHeader["cookie"] = value;
+            return this;
+        }
+
+        public virtual HttpClient<T> SetHeaders(string name, string value)
         {
             mHeader[name] = value;
             return this;
         }
 
-        public HttpClient<T> AddQueryString(string name, object value)
+        public virtual HttpClient<T> SetQueryParams(string name, object value)
         {
             mQueryString[name] = value.ToString();
             return this;
         }
 
-        public HttpClient<T> SetBody(object data)
+        public virtual HttpClient<T> SetBody(object data)
         {
             mDataObject = data;
             return this;
         }
 
-        public HttpClient<T> AddBodyFile(string name, string file)
+        public virtual HttpClient<T> SetBodyFiles(string name, string file)
         {
 
-            AddBodyField(name, new FileInfo(file));
+            SetBodyFields(name, new FileInfo(file));
             return this;
         }
 
-        public HttpClient<T> AddBodyFile(string name, UploadFile file)
+        public virtual HttpClient<T> SetBodyFiles(string name, UploadFile file)
         {
-            AddBodyField(name, file);
+            SetBodyFields(name, file);
             return this;
         }
 
-        public HttpClient<T> AddBodyField(string name, object data)
+        public virtual HttpClient<T> SetBodyFields(string name, object data)
         {
             mDataMap[name] = data;
             return this;
         }
-        public async Task<RESULT> Get<RESULT>(string url)
+
+        public string RequestUrl { get; set; }
+
+        public async Task<RESULT> Get<RESULT>()
         {
-            var response = await Get(url, typeof(RESULT));
+            var response = await Get(typeof(RESULT));
             return response.GetResult<RESULT>();
         }
-        public Task<Response> Get(string url, Type bodyType = null)
+        public Task<Response> Get(Type bodyType = null)
         {
-            var request = mHost.Get(url, mHeader, mQueryString, new T(), bodyType);
+            var request = mHost.Get(RequestUrl, mHeader, mQueryString, new T(), bodyType);
+            request.TimeOut = TimeOut;
             return request.Execute();
         }
-        public async Task<RESULT> Post<RESULT>(string url)
+        public async Task<RESULT> Post<RESULT>()
         {
-            var response = await Post(url, typeof(RESULT));
+            var response = await Post(typeof(RESULT));
             return response.GetResult<RESULT>();
         }
-        public Task<Response> Post(string url, Type bodyType = null)
+        public Task<Response> Post(Type bodyType = null)
         {
-            var request = mHost.Post(url, mHeader, mQueryString, mDataObject == null ? mDataMap : mDataObject, new T(), bodyType);
+            var request = mHost.Post(RequestUrl, mHeader, mQueryString, mDataObject == null ? mDataMap : mDataObject, new T(), bodyType);
+            request.TimeOut = TimeOut;
             return request.Execute();
         }
-        public async Task<RESULT> Put<RESULT>(string url)
+        public async Task<RESULT> Put<RESULT>()
         {
-            var response = await Put(url, typeof(RESULT));
+            var response = await Put(typeof(RESULT));
             return response.GetResult<RESULT>();
         }
-        public Task<Response> Put(string url, Type bodyType = null)
+        public Task<Response> Put(Type bodyType = null)
         {
-            var request = mHost.Put(url, mHeader, mQueryString, mDataObject == null ? mDataMap : mDataObject, new T(), bodyType);
+            var request = mHost.Put(RequestUrl, mHeader, mQueryString, mDataObject == null ? mDataMap : mDataObject, new T(), bodyType);
+            request.TimeOut = TimeOut;
             return request.Execute();
         }
-        public async Task<RESULT> Delete<RESULT>(string url)
+        public async Task<RESULT> Delete<RESULT>()
         {
-            var response = await Delete(url, typeof(RESULT));
+            var response = await Delete(typeof(RESULT));
             return response.GetResult<RESULT>();
         }
-        public Task<Response> Delete(string url, Type bodyType = null)
+        public Task<Response> Delete(Type bodyType = null)
         {
-            var request = mHost.Delete(url, mHeader, mQueryString, new T(), bodyType);
+            var request = mHost.Delete(RequestUrl, mHeader, mQueryString, new T(), bodyType);
+            request.TimeOut = TimeOut;
             return request.Execute();
         }
     }

@@ -193,16 +193,23 @@ namespace BeetleX.Http.Clients
 
         private void OnRequestTimeout(IAnyCompletionSource source)
         {
-            Response response = new Response();
-            response.Code = "408";
-            response.CodeMsg = "Request timeout";
-            response.Exception = new HttpClientException(this, HttpHost.Uri, "Request timeout");
-            source?.Success(response);
+            if (requestResult != null)
+            {
+                requestResult.TrySetException(new TimeoutException($"request imeout!"));
+            }
+            else
+            {
+                Response response = new Response();
+                response.Code = "408";
+                response.CodeMsg = "Request timeout";
+                response.Exception = new HttpClientException(this, HttpHost.Uri, "Request timeout");
+                source?.Success(response);
+            }
         }
 
         private void onEventClientError(IClient c, ClientErrorArgs e)
         {
-            requestResult.TrySetResult(e.Error);
+            requestResult.TrySetException(e.Error);
         }
 
         private void OnEventClientPacketCompleted(IClient client, object message)
@@ -212,16 +219,23 @@ namespace BeetleX.Http.Clients
 
         private TaskCompletionSource<object> requestResult;
 
+        private async Task DisConnect(IClient client)
+        {
+            client.DisConnect();
+            await Task.Delay(1000);
+        }
+
         private async void OnExecute()
         {
             HttpClientHandler client = null;
             Response response;
+            bool closeClient = false;
             try
             {
                 object result = null;
+                requestResult = new TaskCompletionSource<object>();
                 client = await HttpHost.Pool.Pop();
                 Client = client.Client;
-                requestResult = new TaskCompletionSource<object>();
                 AsyncTcpClient asyncClient = (AsyncTcpClient)client.Client;
                 asyncClient.ClientError = onEventClientError;
                 asyncClient.PacketReceive = OnEventClientPacketCompleted;
@@ -252,6 +266,7 @@ namespace BeetleX.Http.Clients
                     response = new Response();
                     response.Exception = new HttpClientException(this, HttpHost.Uri, error.Message, error);
                     Status = RequestStatus.Error;
+                    closeClient = true;
                 }
                 else
                 {
@@ -294,6 +309,7 @@ namespace BeetleX.Http.Clients
                 HttpClientException clientException = new HttpClientException(this, HttpHost.Uri, e_.Message, e_);
                 response = new Response { Exception = clientException };
                 Status = RequestStatus.Error;
+                closeClient = true;
             }
             if (response.Exception != null)
                 HttpHost.AddError(response.Exception.SocketError);
@@ -308,7 +324,10 @@ namespace BeetleX.Http.Clients
                     asclient.ClientError = null;
                     asclient.PacketReceive = null;
                 }
+                if (closeClient)
+                    await DisConnect(client.Client);
                 HttpHost.Pool.Push(client);
+                client = null;
             }
             await Task.Run(() => mTaskCompletionSource.Success(response));
         }
