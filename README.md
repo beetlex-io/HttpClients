@@ -2,8 +2,38 @@
 BeetleX http and websocket clients for .net standard2.0
 ## Install
 ```
-Install-Package BeetleX.Http.Clients -Version 1.3.5
+Install-Package BeetleX.Http.Clients -Version 1.6
 ```
+``` csharp
+            var result = await "https://www.baidu.com/"
+                    .FormUrlRequest()
+                    .Get();
+            Console.WriteLine(result.Body);
+
+            result = await "https://httpbin.org/get"
+                     .FormUrlRequest()
+                     .Get();
+            Console.WriteLine(result.Body);
+
+
+            result = await "https://httpbin.org/post"
+                     .JsonRequest()
+                     .SetBody(DateTime.Now)
+                     .Post();
+            JToken rdata = result.GetResult<JToken>()["data"];
+
+            Console.WriteLine(rdata);
+
+
+            var buffer = await "https://httpbin.org/image"
+                           .BinaryRequest()
+                           .Download();
+
+             result = await "http://localhost/Upload"
+                           .FormDataRequest()
+                           .Upload("g:\\extension_1_4_3_0.rar", "g:\\extension_1_4_3_0_1.rar");
+```
+
 ## WebApi
 ### Defined interface
 ``` csharp
