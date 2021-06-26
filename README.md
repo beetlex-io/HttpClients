@@ -34,20 +34,6 @@ Install-Package BeetleX.Http.Clients -Version 1.6
                            .Upload("g:\\extension_1_4_3_0.rar", "g:\\extension_1_4_3_0_1.rar");
 ```
 
-## WebApi
-### Defined interface
-``` csharp
-    public interface INorthWind
-    {
-        Task<Employee> GetEmployee(int id);
-        [Post]
-        Task<Employee> Add(Employee emp);
-        [Post]
-        Task<bool> Login(string name, string value);       
-        [Post]
-        Task<Employee> Modify([CQuery]int id, Employee body);
-    }
-```
 ### Http Cluster
 ``` csharp
 HttpCluster httpCluster = new HttpCluster();
@@ -60,6 +46,18 @@ httpCluster.DefaultNode
     data = await client.Get();
 ```
 ### Http Cluster interface
+``` csharp
+    public interface INorthWind
+    {
+        Task<Employee> GetEmployee(int id);
+        [Post]
+        Task<Employee> Add(Employee emp);
+        [Post]
+        Task<bool> Login(string name, string value);       
+        [Post]
+        Task<Employee> Modify([CQuery]int id, Employee body);
+    }
+```
 ``` csharp
 HttpCluster httpClusterApi = new HttpClusterApi();
 httpCluster.DefaultNode.Add("http://localhost:8080");
