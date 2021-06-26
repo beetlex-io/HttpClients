@@ -38,12 +38,12 @@ Install-Package BeetleX.Http.Clients -Version 1.6
 ``` csharp
 HttpCluster httpCluster = new HttpCluster();
 httpCluster.DefaultNode
-    .Add("http://192.168.2.25:8080")
-    .Add("http://192.168.2.26:8080");
-    var client = httpCluster.JsonRequest("/customers?count=10");
-    var data = await client.Get();
-    client = httpCluster.JsonRequest("/orders?size=10");
-    data = await client.Get();
+.Add("http://192.168.2.25:8080")
+.Add("http://192.168.2.26:8080");
+var client = httpCluster.JsonRequest("/customers?count=10");
+var data = await client.Get();
+client = httpCluster.JsonRequest("/orders?size=10");
+data = await client.Get();
 ```
 ### Http Cluster interface
 ``` csharp
