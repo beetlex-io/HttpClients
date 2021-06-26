@@ -48,16 +48,27 @@ Install-Package BeetleX.Http.Clients -Version 1.6
         Task<Employee> Modify([CQuery]int id, Employee body);
     }
 ```
-### Create interface
+### Http Cluster
 ``` csharp
-HttpClusterApi httpClusterApi = new HttpClusterApi();
-httpClusterApi.DefaultNode.Add("http://localhost:8080");
-northWind = httpClusterApi.Create<INorthWind>();
+HttpCluster httpCluster = new HttpCluster();
+httpCluster.DefaultNode
+    .Add("http://192.168.2.25:8080")
+    .Add("http://192.168.2.26:8080");
+    var client = httpCluster.JsonRequest("/customers?count=10");
+    var data = await client.Get();
+    client = httpCluster.JsonRequest("/orders?size=10");
+    data = await client.Get();
+```
+### Http Cluster interface
+``` csharp
+HttpCluster httpClusterApi = new HttpClusterApi();
+httpCluster.DefaultNode.Add("http://localhost:8080");
+northWind = httpCluster.Create<INorthWind>();
 var result = await northWind.GetEmployee(1);
 ```
 ### Multi server
 ``` csharp
-httpClusterApi.DefaultNode
+httpCluster.DefaultNode
     .Add("http://192.168.2.25:8080")
     .Add("http://192.168.2.26:8080");
 ```
