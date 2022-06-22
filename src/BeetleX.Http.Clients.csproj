@@ -35,7 +35,7 @@
   <ItemGroup>
     <PackageReference Include="BeetleX" Version="1.6.6.3" />
     <PackageReference Include="BeetleX.Tasks" Version="0.7.5" />
-    <PackageReference Include="Newtonsoft.Json" Version="12.0.2" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
     <PackageReference Include="System.Reflection.DispatchProxy" Version="4.5.1" />
   </ItemGroup>
 
