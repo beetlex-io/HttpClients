@@ -22,7 +22,7 @@
   <ItemGroup>
     <PackageReference Include="MessagePack" Version="2.0.323" />
     <PackageReference Include="MessagePackAnalyzer" Version="2.0.323" />
-    <PackageReference Include="Newtonsoft.Json" Version="12.0.1" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.2" />
     <PackageReference Include="protobuf-net" Version="2.4.0" />
   </ItemGroup>
 
